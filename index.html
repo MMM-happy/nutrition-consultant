@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="h-full bg-slate-950 text-slate-100">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 專屬醫師兼健康顧問 - 多使用者智慧儀表板</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome 圖標 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Marked.js 解析 AI 推薦 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Plus+Jakarta+Sans:wght@500;700;800&display=swap" rel="stylesheet">
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['"Noto Sans TC"', '"Plus Jakarta Sans"', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        .glass-panel {
+            background: rgba(15, 23, 42, 0.75);
+            backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .glass-card {
+            background: rgba(30, 41, 59, 0.6);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+        .markdown-body {
+            color: #cbd5e1;
+            line-height: 1.7;
+        }
+        .markdown-body h1, .markdown-body h2 {
+            color: #38bdf8;
+            font-weight: 700;
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+        }
+        .markdown-body h3 {
+            color: #2dd4bf;
+            font-weight: 700;
+            margin-top: 0.8rem;
+        }
+        .markdown-body ul {
+            list-style-type: disc;
+            padding-left: 1.25rem;
+            margin-bottom: 0.75rem;
+        }
+    </style>
+</head>
+
+<body class="min-h-screen bg-slate-950 font-sans antialiased text-slate-100 pb-16">
+
+    <!-- Background Accents -->
+    <div class="fixed top-0 left-1/3 w-96 h-96 bg-blue-600/10 blur-[130px] rounded-full pointer-events-none"></div>
+    <div class="fixed bottom-10 right-1/4 w-96 h-96 bg-emerald-600/10 blur-[130px] rounded-full pointer-events-none"></div>
+
+    <!-- Header Section with Multi-User Selector -->
+    <header class="border-b border-slate-800 glass-panel sticky top-0 z-40">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 h-20 flex flex-wrap items-center justify-between gap-4">
+            
+            <div class="flex items-center space-x-3">
+                <div class="w-11 h-11 rounded-2xl bg-gradient-to-tr from-emerald-500 to-blue-600 flex items-center justify-center shadow-lg shadow-emerald-500/20">
+                    <i class="fa-solid fa-heart-pulse text-white text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="text-lg sm:text-xl font-extrabold bg-gradient-to-r from-emerald-400 via-teal-300 to-cyan-400 bg-clip-text text-transparent">
+                        AI 專屬醫師兼健康顧問看板
+                    </h1>
+                    <div class="flex items-center space-x-2 text-xs text-slate-400">
+                        <span>目前切換：</span>
+                        <!-- User Dropdown Switcher -->
+                        <select id="userSelect" onchange="changeUser()" class="bg-slate-900 text-emerald-300 border border-slate-700 font-bold px-2 py-0.5 rounded-lg focus:outline-none">
+                            <!-- Dynamic User Options -->
+                        </select>
+                        <button onclick="openAddUserModal()" class="text-xs bg-emerald-950 hover:bg-emerald-900 text-emerald-400 border border-emerald-800/80 px-2 py-0.5 rounded-lg transition-colors flex items-center space-x-1">
+                            <i class="fa-solid fa-plus text-[10px]"></i>
+                            <span>新增使用者</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-center space-x-3">
+                <div class="bg-blue-950/80 border border-blue-800/60 text-blue-300 px-3.5 py-1.5 rounded-xl text-xs font-semibold flex items-center space-x-2">
+                    <i class="fa-solid fa-fire text-amber-400"></i>
+                    <span id="headerBmr">BMR: 1302 kcal</span>
+                </div>
+                <!-- API Key Input -->
+                <div class="relative">
+                    <input type="password" id="userApiKey" placeholder="API Key (選擇性)"
+                        class="px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-cyan-500 w-36 sm:w-44">
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-6xl mx-auto px-4 sm:px-6 pt-8 space-y-8">
+
+        <!-- User Info Badge & Target Bar -->
+        <div class="glass-card p-4 rounded-2xl flex flex-wrap items-center justify-between gap-3 border-emerald-500/20">
+            <div class="flex items-center space-x-3">
+                <div class="w-10 h-10 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-lg text-emerald-400 font-bold" id="userAvatar">
+                    雷
+                </div>
+                <div>
+                    <h2 class="text-sm font-bold text-white flex items-center space-x-2">
+                        <span id="userDisplayName">雷米熹</span>
+                        <span id="userGoalBadge" class="text-[10px] bg-blue-950 text-blue-400 border border-blue-800 px-2 py-0.5 rounded-full font-semibold">目標體重 58 kg</span>
+                    </h2>
+                    <p class="text-xs text-slate-400" id="userInfoSub">每日建議熱量：1450 kcal | BMR：1302 kcal</p>
+                </div>
+            </div>
+            <button onclick="deleteCurrentProfile()" class="text-xs text-slate-500 hover:text-rose-400 transition-colors flex items-center space-x-1">
+                <i class="fa-solid fa-user-minus"></i>
+                <span>刪除此使用者 profile</span>
+            </button>
+        </div>
+
+        <!-- Top Overview Target Cards -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+            
+            <!-- Calories Card -->
+            <div class="glass-card p-5 rounded-2xl">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs font-bold text-slate-400">當日總熱量 🔥</span>
+                    <span id="calStatusBadge" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-950 text-blue-400 border border-blue-800">進行中</span>
+                </div>
+                <div class="flex items-baseline space-x-1">
+                    <span id="currCal" class="text-2xl sm:text-3xl font-extrabold text-white">0</span>
+                    <span class="text-xs text-slate-400">/ <span id="targetCal">1450</span> kcal</span>
+                </div>
+                <div class="w-full bg-slate-800 rounded-full h-2 mt-3 overflow-hidden">
+                    <div id="calBar" class="bg-gradient-to-r from-blue-500 to-cyan-400 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                </div>
+                <p id="calDiffText" class="text-xs text-blue-400 font-medium mt-2">剩餘 1450 kcal</p>
+            </div>
+
+            <!-- Protein Card -->
+            <div class="glass-card p-5 rounded-2xl">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs font-bold text-slate-400">蛋白質 💪</span>
+                    <span class="text-[10px] font-semibold text-emerald-400">目標 <span id="targetP">105</span>g</span>
+                </div>
+                <div class="flex items-baseline space-x-1">
+                    <span id="currP" class="text-2xl sm:text-3xl font-extrabold text-emerald-400">0</span>
+                    <span class="text-xs text-slate-400">g</span>
+                </div>
+                <div class="w-full bg-slate-800 rounded-full h-2 mt-3 overflow-hidden">
+                    <div id="pBar" class="bg-emerald-500 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                </div>
+                <p id="pDiffText" class="text-xs text-rose-400 font-semibold mt-2">尚缺 105g</p>
+            </div>
+
+            <!-- Carbs Card -->
+            <div class="glass-card p-5 rounded-2xl">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs font-bold text-slate-400">碳水化合物 🌾</span>
+                    <span class="text-[10px] font-semibold text-amber-400">目標 <span id="targetC">150</span>g</span>
+                </div>
+                <div class="flex items-baseline space-x-1">
+                    <span id="currC" class="text-2xl sm:text-3xl font-extrabold text-amber-400">0</span>
+                    <span class="text-xs text-slate-400">g</span>
+                </div>
+                <div class="w-full bg-slate-800 rounded-full h-2 mt-3 overflow-hidden">
+                    <div id="cBar" class="bg-amber-500 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                </div>
+                <p id="cDiffText" class="text-xs text-amber-400 font-medium mt-2">剩餘 150g</p>
+            </div>
+
+            <!-- Fat Card -->
+            <div class="glass-card p-5 rounded-2xl">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-xs font-bold text-slate-400">脂肪 🥑</span>
+                    <span class="text-[10px] font-semibold text-purple-400">目標 <span id="targetF">45</span>g</span>
+                </div>
+                <div class="flex items-baseline space-x-1">
+                    <span id="currF" class="text-2xl sm:text-3xl font-extrabold text-purple-400">0</span>
+                    <span class="text-xs text-slate-400">g</span>
+                </div>
+                <div class="w-full bg-slate-800 rounded-full h-2 mt-3 overflow-hidden">
+                    <div id="fBar" class="bg-purple-500 h-2 rounded-full transition-all duration-500" style="width: 0%"></div>
+                </div>
+                <p id="fDiffText" class="text-xs text-purple-400 font-medium mt-2">剩餘 45g</p>
+            </div>
+
+        </div>
+
+        <!-- AI Intelligent Meal Logger with BOTH Text & Photo Vision -->
+        <div class="glass-panel p-6 sm:p-8 rounded-3xl space-y-6 border-cyan-500/20">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <div class="flex items-center space-x-2">
+                    <div class="w-8 h-8 rounded-xl bg-cyan-500/20 text-cyan-400 flex items-center justify-center text-sm">
+                        <i class="fa-solid fa-wand-magic-sparkles"></i>
+                    </div>
+                    <h3 class="text-lg font-bold text-white">AI 智慧飲食記帳（支援文字 & 食物拍照辨識）</h3>
+                </div>
+                
+                <!-- Toggle Mode Tabs -->
+                <div class="flex bg-slate-900 p-1 rounded-xl border border-slate-800 text-xs">
+                    <button id="modePhotoBtn" onclick="switchMode('photo')" class="px-3 py-1.5 rounded-lg font-semibold bg-cyan-500 text-white transition-all flex items-center space-x-1.5">
+                        <i class="fa-solid fa-camera"></i>
+                        <span>📷 上傳/拍照辨識</span>
+                    </button>
+                    <button id="modeTextBtn" onclick="switchMode('text')" class="px-3 py-1.5 rounded-lg font-semibold text-slate-400 hover:text-white transition-all flex items-center space-x-1.5">
+                        <i class="fa-solid fa-keyboard"></i>
+                        <span>💬 文字輸入</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- MODE 1: Photo / Camera Upload -->
+            <div id="photoModeArea" class="space-y-4">
+                <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+                    
+                    <div class="md:col-span-3">
+                        <label class="block text-xs font-semibold text-slate-400 mb-1.5">餐別選擇</label>
+                        <select id="photoMealType" class="w-full px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500">
+                            <option value="早餐">🌅 早餐</option>
+                            <option value="午餐" selected>☀️ 午餐</option>
+                            <option value="晚餐">🌙 晚餐</option>
+                            <option value="點心">🍵 點心/飲料</option>
+                        </select>
+                    </div>
+
+                    <div class="md:col-span-9">
+                        <label class="block text-xs font-semibold text-slate-400 mb-1.5">選擇或拍攝食物照片</label>
+                        <label for="foodPhotoInput" class="w-full border-2 border-dashed border-slate-700 hover:border-cyan-400 bg-slate-900/60 hover:bg-slate-900 rounded-xl p-4 flex items-center justify-center space-x-3 cursor-pointer transition-all">
+                            <i class="fa-solid fa-cloud-arrow-up text-cyan-400 text-xl"></i>
+                            <span id="photoFileName" class="text-sm text-slate-300 font-medium">點擊選擇照片 / 手機直接拍照上傳</span>
+                            <input type="file" id="foodPhotoInput" accept="image/*" class="hidden" onchange="handlePhotoSelect(event)">
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Photo Preview Box -->
+                <div id="photoPreviewContainer" class="hidden relative rounded-2xl overflow-hidden max-w-xs mx-auto border border-slate-700">
+                    <img id="photoPreview" class="w-full h-48 object-cover">
+                    <button onclick="clearPhoto()" class="absolute top-2 right-2 bg-rose-600/80 hover:bg-rose-600 text-white w-7 h-7 rounded-full flex items-center justify-center text-xs">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+
+                <button onclick="analyzePhoto()" id="analyzePhotoBtn"
+                    class="w-full py-3.5 bg-gradient-to-r from-emerald-500 via-teal-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 text-white font-bold text-sm rounded-xl transition-all flex items-center justify-center space-x-2 shadow-lg shadow-emerald-500/20">
+                    <i class="fa-solid fa-bolt text-amber-300"></i>
+                    <span id="analyzePhotoBtnText">🤖 AI 視覺辨識照片並計算熱量</span>
+                </button>
+            </div>
+
+            <!-- MODE 2: Text Input -->
+            <div id="textModeArea" class="hidden space-y-4">
+                <form id="mealForm" class="flex flex-col md:flex-row gap-3">
+                    <select id="mealType" class="px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 md:w-36">
+                        <option value="早餐">🌅 早餐</option>
+                        <option value="午餐" selected>☀️ 午餐</option>
+                        <option value="晚餐">🌙 晚餐</option>
+                        <option value="點心">🍵 點心</option>
+                    </select>
+
+                    <input type="text" id="mealInput" placeholder="例如：滷雞腿便當一個、珍珠奶茶半糖..."
+                        class="flex-grow px-4 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500">
+
+                    <button type="submit" id="parseBtn"
+                        class="px-6 py-3 bg-gradient-to-r from-cyan-500 to-blue-600 text-white font-bold text-sm rounded-xl transition-all flex items-center justify-center space-x-2 shrink-0">
+                        <i class="fa-solid fa-robot"></i>
+                        <span id="parseBtnText">AI 文字分析紀錄</span>
+                    </button>
+                </form>
+            </div>
+
+        </div>
+
+        <!-- AI Medical & Meal Recommendation Agent Section -->
+        <div class="glass-panel p-6 sm:p-8 rounded-3xl space-y-6">
+            <div class="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                    <h3 class="text-lg font-bold text-white flex items-center">
+                        <i class="fa-solid fa-user-doctor text-emerald-400 mr-2.5"></i>
+                        AI 專屬醫師配餐救援指南
+                    </h3>
+                    <p class="text-xs text-slate-400 mt-1">根據目前使用者的熱量缺口與蛋白質不足，為您精準規劃下一餐最佳食材組合。</p>
+                </div>
+                <button onclick="getMealRecommendation()" id="recommendBtn"
+                    class="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-emerald-600/25 transition-all flex items-center space-x-2">
+                    <i class="fa-solid fa-utensils"></i>
+                    <span>獲取 AI 專屬菜單推薦</span>
+                </button>
+            </div>
+
+            <div id="recommendBox" class="hidden bg-slate-900/90 border border-slate-800 rounded-2xl p-6">
+                <div id="recommendLoading" class="text-center py-6 space-y-3">
+                    <div class="w-8 h-8 border-3 border-emerald-400 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                    <p class="text-xs text-emerald-300 animate-pulse">AI 營養師正根據您的營養缺口計算最佳菜單組合...</p>
+                </div>
+                <div id="recommendContent" class="markdown-body hidden"></div>
+            </div>
+        </div>
+
+        <!-- Date Logs Main Display -->
+        <div class="space-y-6">
+            
+            <!-- Today Record -->
+            <div class="glass-panel p-6 rounded-3xl border-2 border-blue-500/30 space-y-4">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <h3 class="font-extrabold text-white text-base sm:text-lg flex items-center">
+                        <i class="fa-solid fa-calendar-day text-blue-400 mr-2"></i>
+                        📅 當日飲食紀錄明細
+                    </h3>
+                    <span class="text-xs bg-blue-950 text-blue-400 border border-blue-800 font-semibold px-3 py-1 rounded-full">進行中</span>
+                </div>
+
+                <div id="todayMealList" class="space-y-3">
+                    <!-- Dynamic Meals Rendered Here -->
+                </div>
+            </div>
+
+        </div>
+
+    </main>
+
+    <!-- Add User Modal Window -->
+    <div id="addUserModal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="glass-panel p-6 sm:p-8 rounded-3xl max-w-md w-full border border-slate-700 shadow-2xl space-y-6">
+            <div class="flex justify-between items-center border-b border-slate-800 pb-4">
+                <h3 class="text-lg font-bold text-white flex items-center">
+                    <i class="fa-solid fa-user-plus text-emerald-400 mr-2"></i>
+                    新增健康使用者檔案
+                </h3>
+                <button onclick="closeAddUserModal()" class="text-slate-400 hover:text-white">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <form id="addUserForm" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-300 mb-1">姓名 / 暱稱</label>
+                    <input type="text" id="newUserName" placeholder="例如：小明, 莉莉..." required
+                        class="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500 outline-none">
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">身高 (cm)</label>
+                        <input type="number" id="newUserHeight" value="165" required
+                            class="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">目前體重 (kg)</label>
+                        <input type="number" id="newUserWeight" value="62" required
+                            class="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500 outline-none">
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">目標體重 (kg)</label>
+                        <input type="number" id="newUserTargetWeight" value="58" required
+                            class="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-300 mb-1">生理性別</label>
+                        <select id="newUserGender" class="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500 outline-none">
+                            <option value="female">女性</option>
+                            <option value="male">男性</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-xs font-semibold text-slate-300 mb-1">健康目標風格</label>
+                    <select id="newUserGoal" class="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-emerald-500 outline-none">
+                        <option value="減重雕塑">🔥 減重體態雕塑 (高蛋白低碳水)</option>
+                        <option value="增肌減脂">💪 增肌減脂 (高熱量高蛋白)</option>
+                        <option value="健康維持">🥗 保持現狀與健康體質</option>
+                    </select>
+                </div>
+
+                <button type="submit"
+                    class="w-full py-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white font-bold text-sm rounded-xl transition-all shadow-lg shadow-emerald-500/20">
+                    建立使用者並自動計算 BMR/TDEE
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- JavaScript Logic -->
+    <script>
+        // 預設的使用者清單 (LocalStorage 支援多使用者)
+        const DEFAULT_USERS = [
+            {
+                id: 'u_1',
+                name: '雷米熹',
+                targetWeight: 58,
+                currentWeight: 60,
+                bmr: 1302,
+                targetCalories: 1450,
+                targetP: 105,
+                targetC: 150,
+                targetF: 45,
+                goal: '減重體態雕塑'
+            },
+            {
+                id: 'u_2',
+                name: '小明',
+                targetWeight: 70,
+                currentWeight: 75,
+                bmr: 1680,
+                targetCalories: 2100,
+                targetP: 140,
+                targetC: 220,
+                targetF: 60,
+                goal: '增肌減脂'
+            },
+            {
+                id: 'u_3',
+                name: '莉莉',
+                targetWeight: 50,
+                currentWeight: 52,
+                bmr: 1220,
+                targetCalories: 1350,
+                targetP: 90,
+                targetC: 140,
+                targetF: 40,
+                goal: '健康維持'
+            }
+        ];
+
+        let users = JSON.parse(localStorage.getItem('health_users')) || DEFAULT_USERS;
+        let currentUserId = localStorage.getItem('health_current_user_id') || users[0].id;
+        let currentUser = users.find(u => u.id === currentUserId) || users[0];
+
+        let userMeals = JSON.parse(localStorage.getItem(`health_meals_${currentUserId}`)) || [];
+
+        let selectedBase64Image = null;
+        let selectedImageMimeType = 'image/jpeg';
+
+        window.addEventListener('DOMContentLoaded', () => {
+            renderUserDropdown();
+            loadUserData();
+        });
+
+        // 渲染使用者選單
+        function renderUserDropdown() {
+            const selectEl = document.getElementById('userSelect');
+            selectEl.innerHTML = '';
+            users.forEach(u => {
+                const opt = document.createElement('option');
+                opt.value = u.id;
+                opt.innerText = u.name;
+                if (u.id === currentUserId) opt.selected = true;
+                selectEl.appendChild(opt);
+            });
+        }
+
+        // 切換使用者
+        function changeUser() {
+            currentUserId = document.getElementById('userSelect').value;
+            currentUser = users.find(u => u.id === currentUserId);
+            localStorage.setItem('health_current_user_id', currentUserId);
+            
+            userMeals = JSON.parse(localStorage.getItem(`health_meals_${currentUserId}`)) || [];
+            loadUserData();
+        }
+
+        // 載入與計算目前使用者資料
+        function loadUserData() {
+            document.getElementById('userDisplayName').innerText = currentUser.name;
+            document.getElementById('userAvatar').innerText = currentUser.name.charAt(0);
+            document.getElementById('userGoalBadge').innerText = `${currentUser.goal} | 目標體重 ${currentUser.targetWeight} kg`;
+            document.getElementById('userInfoSub').innerText = `每日建議熱量：${currentUser.targetCalories} kcal | BMR：${currentUser.bmr} kcal`;
+            document.getElementById('headerBmr').innerText = `BMR: ${currentUser.bmr} kcal`;
+
+            document.getElementById('targetCal').innerText = currentUser.targetCalories;
+            document.getElementById('targetP').innerText = currentUser.targetP;
+            document.getElementById('targetC').innerText = currentUser.targetC;
+            document.getElementById('targetF').innerText = currentUser.targetF;
+
+            renderMeals();
+        }
+
+        // 彈窗控制
+        function openAddUserModal() { document.getElementById('addUserModal').classList.remove('hidden'); }
+        function closeAddUserModal() { document.getElementById('addUserModal').classList.add('hidden'); }
+
+        // 新增使用者表單提交 (自動計算 BMR 與 TDEE)
+        document.getElementById('addUserForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const name = document.getElementById('newUserName').value.trim();
+            const height = parseFloat(document.getElementById('newUserHeight').value);
+            const weight = parseFloat(document.getElementById('newUserWeight').value);
+            const targetWeight = parseFloat(document.getElementById('newUserTargetWeight').value);
+            const gender = document.getElementById('newUserGender').value;
+            const goal = document.getElementById('newUserGoal').value;
+
+            // BMR 估算 (Mifflin-St Jeor 公式)
+            let bmr = Math.round((10 * weight) + (6.25 * height) - (5 * 28) + (gender === 'male' ? 5 : -161));
+            let targetCalories = Math.round(bmr * 1.35);
+
+            if (goal === '減重體態雕塑') targetCalories -= 300;
+            if (goal === '增肌減脂') targetCalories += 300;
+
+            const targetP = Math.round(weight * 1.8);
+            const targetF = Math.round((targetCalories * 0.25) / 9);
+            const targetC = Math.round((targetCalories - (targetP * 4) - (targetF * 9)) / 4);
+
+            const newUser = {
+                id: 'u_' + Date.now(),
+                name,
+                currentWeight: weight,
+                targetWeight,
+                bmr,
+                targetCalories,
+                targetP,
+                targetC,
+                targetF,
+                goal
+            };
+
+            users.push(newUser);
+            localStorage.setItem('health_users', JSON.stringify(users));
+            
+            currentUserId = newUser.id;
+            currentUser = newUser;
+            userMeals = [];
+
+            renderUserDropdown();
+            loadUserData();
+            closeAddUserModal();
+            alert(`🎉 成功建立使用者「${name}」！自動計算 BMR: ${bmr} kcal, 建議熱量: ${targetCalories} kcal`);
+        });
+
+        // 刪除目前使用者 Profile
+        function deleteCurrentProfile() {
+            if (users.length <= 1) {
+                alert('至少需保留一位使用者！');
+                return;
+            }
+            if (confirm(`確定要刪除「${currentUser.name}」的 Profile 嗎？`)) {
+                users = users.filter(u => u.id !== currentUserId);
+                localStorage.setItem('health_users', JSON.stringify(users));
+                localStorage.removeItem(`health_meals_${currentUserId}`);
+
+                currentUserId = users[0].id;
+                currentUser = users[0];
+                userMeals = JSON.parse(localStorage.getItem(`health_meals_${currentUserId}`)) || [];
+
+                renderUserDropdown();
+                loadUserData();
+            }
+        }
+
+        // 模式切換 (Photo vs Text)
+        function switchMode(mode) {
+            const photoArea = document.getElementById('photoModeArea');
+            const textArea = document.getElementById('textModeArea');
+            const photoBtn = document.getElementById('modePhotoBtn');
+            const textBtn = document.getElementById('modeTextBtn');
+
+            if (mode === 'photo') {
+                photoArea.classList.remove('hidden');
+                textArea.classList.add('hidden');
+                photoBtn.className = 'px-3 py-1.5 rounded-lg font-semibold bg-cyan-500 text-white transition-all flex items-center space-x-1.5';
+                textBtn.className = 'px-3 py-1.5 rounded-lg font-semibold text-slate-400 hover:text-white transition-all flex items-center space-x-1.5';
+            } else {
+                textArea.classList.remove('hidden');
+                photoArea.classList.add('hidden');
+                textBtn.className = 'px-3 py-1.5 rounded-lg font-semibold bg-cyan-500 text-white transition-all flex items-center space-x-1.5';
+                photoBtn.className = 'px-3 py-1.5 rounded-lg font-semibold text-slate-400 hover:text-white transition-all flex items-center space-x-1.5';
+            }
+        }
+
+        function handlePhotoSelect(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            selectedImageMimeType = file.type || 'image/jpeg';
+            document.getElementById('photoFileName').innerText = file.name;
+
+            const reader = new FileReader();
+            reader.onload = function(evt) {
+                selectedBase64Image = evt.target.result;
+                document.getElementById('photoPreview').src = selectedBase64Image;
+                document.getElementById('photoPreviewContainer').classList.remove('hidden');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function clearPhoto() {
+            selectedBase64Image = null;
+            document.getElementById('foodPhotoInput').value = '';
+            document.getElementById('photoFileName').innerText = '點擊選擇照片 / 手機直接拍照上傳';
+            document.getElementById('photoPreviewContainer').classList.add('hidden');
+        }
+
+        // AI Vision 照片辨識
+        async function analyzePhoto() {
+            if (!selectedBase64Image) {
+                alert('請先點擊選擇或拍攝一張食物照片！');
+                return;
+            }
+
+            const mealType = document.getElementById('photoMealType').value;
+            const apiKey = document.getElementById('userApiKey').value.trim();
+            const btn = document.getElementById('analyzePhotoBtn');
+            const btnText = document.getElementById('analyzePhotoBtnText');
+
+            btn.disabled = true;
+            btnText.innerText = 'AI 正在影像辨識與計算熱量中...';
+
+            try {
+                const res = await fetch('/api/parse-food-image', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        imageBase64: selectedBase64Image,
+                        mimeType: selectedImageMimeType,
+                        mealType,
+                        apiKey
+                    })
+                });
+
+                const result = await res.json();
+                if (result.success) {
+                    const data = result.data;
+                    userMeals.push({
+                        id: Date.now(),
+                        type: mealType,
+                        name: '📸 ' + (data.mealName || '照片辨識餐點'),
+                        calories: data.calories || 350,
+                        protein: data.protein || 20,
+                        carbs: data.carbs || 30,
+                        fat: data.fat || 12,
+                        tip: data.tip || ''
+                    });
+
+                    renderMeals();
+                    clearPhoto();
+                    alert(`🎉 辨識成功！已為 ${currentUser.name} 新增：${data.mealName} (約 ${data.calories} kcal)`);
+                } else {
+                    alert('分析失敗: ' + result.error);
+                }
+            } catch (err) {
+                alert('無法連線至伺服器，請確認伺服器是否正常運行！');
+            } finally {
+                btn.disabled = false;
+                btnText.innerText = '🤖 AI 視覺辨識照片並計算熱量';
+            }
+        }
+
+        // 渲染餐點明細與進度卡片
+        function renderMeals() {
+            const listEl = document.getElementById('todayMealList');
+            listEl.innerHTML = '';
+
+            let totalCal = 0, totalP = 0, totalC = 0, totalF = 0;
+
+            userMeals.forEach((meal, index) => {
+                totalCal += meal.calories;
+                totalP += meal.protein;
+                totalC += meal.carbs;
+                totalF += meal.fat;
+
+                const card = document.createElement('div');
+                card.className = 'bg-slate-900/90 p-4 rounded-2xl border border-slate-800 space-y-2';
+                card.innerHTML = `
+                    <div class="flex justify-between items-start">
+                        <div>
+                            <span class="text-xs font-bold px-2 py-0.5 rounded bg-blue-950 text-blue-400 mr-2">${meal.type}</span>
+                            <span class="font-bold text-white text-sm sm:text-base">${meal.name}</span>
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <span class="text-xs font-extrabold text-cyan-400 bg-slate-800 px-2.5 py-1 rounded-lg">約 ${meal.calories} kcal</span>
+                            <button onclick="deleteMeal(${index})" class="text-slate-500 hover:text-rose-400 text-xs transition-colors">
+                                <i class="fa-solid fa-trash-can"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="text-xs text-slate-400 flex flex-wrap gap-4 pt-1 border-t border-slate-800/60">
+                        <span>💪 蛋白質: <strong class="text-emerald-400">${meal.protein}g</strong></span>
+                        <span>🌾 碳水: <strong class="text-amber-400">${meal.carbs}g</strong></span>
+                        <span>🥑 脂肪: <strong class="text-purple-400">${meal.fat}g</strong></span>
+                    </div>
+                    ${meal.tip ? `<p class="text-[11px] text-cyan-300/90 bg-cyan-950/40 p-2 rounded-xl border border-cyan-900/30">💡 AI 觀點：${meal.tip}</p>` : ''}
+                `;
+                listEl.appendChild(card);
+            });
+
+            if (userMeals.length === 0) {
+                listEl.innerHTML = `<div class="text-center py-8 text-slate-500 text-xs">目前尚無飲食紀錄，請點擊上方照片辨識或文字輸入來新增！</div>`;
+            }
+
+            document.getElementById('currCal').innerText = totalCal;
+            document.getElementById('currP').innerText = totalP;
+            document.getElementById('currC').innerText = totalC;
+            document.getElementById('currF').innerText = totalF;
+
+            const calPct = Math.min(100, Math.round((totalCal / currentUser.targetCalories) * 100));
+            const pPct = Math.min(100, Math.round((totalP / currentUser.targetP) * 100));
+            const cPct = Math.min(100, Math.round((totalC / currentUser.targetC) * 100));
+            const fPct = Math.min(100, Math.round((totalF / currentUser.targetF) * 100));
+
+            document.getElementById('calBar').style.width = calPct + '%';
+            document.getElementById('pBar').style.width = pPct + '%';
+            document.getElementById('cBar').style.width = cPct + '%';
+            document.getElementById('fBar').style.width = fPct + '%';
+
+            const pDiff = currentUser.targetP - totalP;
+            document.getElementById('pDiffText').innerText = pDiff > 0 ? `尚缺 ${pDiff}g` : '🎉 已達標！';
+
+            const cDiff = currentUser.targetC - totalC;
+            document.getElementById('cDiffText').innerText = cDiff > 0 ? `剩餘 ${cDiff}g` : '⚠️ 碳水已超標';
+
+            const fDiff = currentUser.targetF - totalF;
+            document.getElementById('fDiffText').innerText = fDiff > 0 ? `剩餘 ${fDiff}g` : '⚠️ 脂肪已超標';
+
+            const calDiff = currentUser.targetCalories - totalCal;
+            document.getElementById('calDiffText').innerText = calDiff >= 0 ? `剩餘 ${calDiff} kcal` : `⚠️ 超標 ${Math.abs(calDiff)} kcal`;
+
+            localStorage.setItem(`health_meals_${currentUserId}`, JSON.stringify(userMeals));
+        }
+
+        function deleteMeal(idx) {
+            userMeals.splice(idx, 1);
+            renderMeals();
+        }
+
+        // 文字記帳
+        document.getElementById('mealForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const mealType = document.getElementById('mealType').value;
+            const mealInput = document.getElementById('mealInput').value.trim();
+            const apiKey = document.getElementById('userApiKey').value.trim();
+
+            if (!mealInput) return;
+
+            const parseBtn = document.getElementById('parseBtn');
+            const parseBtnText = document.getElementById('parseBtnText');
+            parseBtn.disabled = true;
+            parseBtnText.innerText = 'AI 分析中...';
+
+            try {
+                const res = await fetch('/api/parse-meal', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ mealInput, mealType, apiKey })
+                });
+
+                const result = await res.json();
+                if (result.success) {
+                    const data = result.data;
+                    userMeals.push({
+                        id: Date.now(),
+                        type: mealType,
+                        name: data.mealName || mealInput,
+                        calories: data.calories || 300,
+                        protein: data.protein || 15,
+                        carbs: data.carbs || 35,
+                        fat: data.fat || 10,
+                        tip: data.tip || ''
+                    });
+
+                    renderMeals();
+                    document.getElementById('mealInput').value = '';
+                } else {
+                    alert('分析失敗: ' + result.error);
+                }
+            } catch (err) {
+                alert('無法連線至伺服器！');
+            } finally {
+                parseBtn.disabled = false;
+                parseBtnText.innerText = 'AI 文字分析紀錄';
+            }
+        });
+
+        // 專屬菜單推薦
+        async function getMealRecommendation() {
+            const apiKey = document.getElementById('userApiKey').value.trim();
+            const box = document.getElementById('recommendBox');
+            const loading = document.getElementById('recommendLoading');
+            const content = document.getElementById('recommendContent');
+
+            box.classList.remove('hidden');
+            loading.classList.remove('hidden');
+            content.classList.add('hidden');
+
+            let currCal = 0, currP = 0, currC = 0, currF = 0;
+            userMeals.forEach(m => {
+                currCal += m.calories;
+                currP += m.protein;
+                currC += m.carbs;
+                currF += m.fat;
+            });
+
+            try {
+                const res = await fetch('/api/recommend-meal', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        targetCalories: currentUser.targetCalories,
+                        targetP: currentUser.targetP,
+                        targetC: currentUser.targetC,
+                        targetF: currentUser.targetF,
+                        currentCalories: currCal,
+                        currentP: currP,
+                        currentC: currC,
+                        currentF: currF,
+                        apiKey
+                    })
+                });
+
+                const result = await res.json();
+                if (result.success) {
+                    content.innerHTML = marked.parse(result.data);
+                    loading.classList.add('hidden');
+                    content.classList.remove('hidden');
+                } else {
+                    alert('推薦失敗: ' + result.error);
+                    box.classList.add('hidden');
+                }
+            } catch (err) {
+                alert('無法連線至伺服器！');
+                box.classList.add('hidden');
+            }
+        }
+    </script>
+</body>
+</html>

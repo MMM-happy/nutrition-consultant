@@ -1,0 +1,16 @@
+{
+  "name": "ai-travel-assistant",
+  "version": "1.0.0",
+  "description": "智遊秘書 AI 助理 - 基於 Gemini 2.5 Flash 模型與 Express 的旅遊行程規劃器",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2"
+  }
+}
