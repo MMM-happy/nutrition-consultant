@@ -310,6 +310,32 @@
             </div>
         </div>
 
+        <!-- Daily history & charts -->
+        <section class="glass-panel p-6 rounded-3xl border border-violet-500/25 space-y-5">
+            <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+                <div>
+                    <div class="flex items-center gap-2">
+                        <div class="w-8 h-8 rounded-xl bg-violet-500/20 text-violet-300 flex items-center justify-center text-sm"><i class="fa-solid fa-chart-line"></i></div>
+                        <h3 class="text-lg font-bold text-white">飲食趨勢總覽</h3>
+                    </div>
+                    <p class="text-xs text-slate-400 mt-1">查看每天的熱量與三大營養素，快速掌握飲食節奏。</p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <button type="button" onclick="setChartRange(7)" data-chart-range="7" class="chart-range-btn px-3 py-1.5 rounded-lg text-xs font-bold bg-violet-500 text-white">近 7 天</button>
+                    <button type="button" onclick="setChartRange(30)" data-chart-range="30" class="chart-range-btn px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 hover:text-white">近 30 天</button>
+                    <label class="ml-1 text-xs text-slate-400" for="recordDate">紀錄日期</label>
+                    <input type="date" id="recordDate" onchange="changeRecordDate(this.value)" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-violet-500">
+                </div>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+                <div class="lg:col-span-3 bg-slate-900/70 border border-slate-800 rounded-2xl p-4 h-72"><div id="calorieTrendChart" class="h-full" aria-label="每日熱量趨勢圖"></div></div>
+                <div class="lg:col-span-2 bg-slate-900/70 border border-slate-800 rounded-2xl p-4 h-72 flex flex-col">
+                    <p id="macroChartTitle" class="text-xs font-bold text-slate-300 mb-2">今日三大營養素</p>
+                    <div class="min-h-0 flex-1 flex justify-center"><div id="macroChart" class="w-full h-full" aria-label="三大營養素圖"></div></div>
+                </div>
+            </div>
+        </section>
+
         <!-- Date Logs Main Display -->
         <div class="space-y-6">
             
@@ -318,9 +344,9 @@
                 <div class="flex items-center justify-between border-b border-slate-800 pb-3">
                     <h3 class="font-extrabold text-white text-base sm:text-lg flex items-center">
                         <i class="fa-solid fa-calendar-day text-blue-400 mr-2"></i>
-                        📅 當日飲食紀錄明細
+                        <span id="recordHeading">📅 當日飲食紀錄明細</span>
                     </h3>
-                    <span class="text-xs bg-blue-950 text-blue-400 border border-blue-800 font-semibold px-3 py-1 rounded-full">進行中</span>
+                    <span id="recordStatus" class="text-xs bg-blue-950 text-blue-400 border border-blue-800 font-semibold px-3 py-1 rounded-full">進行中</span>
                 </div>
 
                 <div id="todayMealList" class="space-y-3">
@@ -443,15 +469,90 @@
         let currentUserId = localStorage.getItem('health_current_user_id') || users[0].id;
         let currentUser = users.find(u => u.id === currentUserId) || users[0];
 
-        let userMeals = JSON.parse(localStorage.getItem(`health_meals_${currentUserId}`)) || [];
+        // 每位使用者的飲食資料依日期保存：{ "YYYY-MM-DD": [meal, ...] }
+        // 舊版的單一清單會在第一次開啟時自動搬到今天，不會遺失既有紀錄。
+        let selectedDate = getTodayKey();
+        let userMeals = [];
+        let chartRange = 7;
 
         let selectedBase64Image = null;
         let selectedImageMimeType = 'image/jpeg';
 
         window.addEventListener('DOMContentLoaded', () => {
             renderUserDropdown();
+            document.getElementById('recordDate').value = selectedDate;
+            userMeals = getMealsForDate();
             loadUserData();
         });
+
+        function getTodayKey() {
+            const now = new Date();
+            const offset = now.getTimezoneOffset() * 60000;
+            return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+        }
+
+        function getDailyLogsKey(userId = currentUserId) {
+            return `health_daily_meals_${userId}`;
+        }
+
+        function getDailyLogs(userId = currentUserId) {
+            const storageKey = getDailyLogsKey(userId);
+            const storedLogs = localStorage.getItem(storageKey);
+            if (storedLogs) {
+                try { return JSON.parse(storedLogs) || {}; } catch (error) { return {}; }
+            }
+
+            const legacyMeals = JSON.parse(localStorage.getItem(`health_meals_${userId}`)) || [];
+            const migratedLogs = legacyMeals.length ? { [getTodayKey()]: legacyMeals } : {};
+            localStorage.setItem(storageKey, JSON.stringify(migratedLogs));
+            return migratedLogs;
+        }
+
+        function getMealsForDate() {
+            const logs = getDailyLogs();
+            return Array.isArray(logs[selectedDate]) ? logs[selectedDate] : [];
+        }
+
+        function saveMealsForSelectedDate() {
+            const logs = getDailyLogs();
+            logs[selectedDate] = userMeals;
+            localStorage.setItem(getDailyLogsKey(), JSON.stringify(logs));
+        }
+
+        function formatRecordDate(dateKey) {
+            return new Intl.DateTimeFormat('zh-TW', { month: 'long', day: 'numeric', weekday: 'short' })
+                .format(new Date(`${dateKey}T00:00:00`));
+        }
+
+        function updateRecordHeading() {
+            const isToday = selectedDate === getTodayKey();
+            document.getElementById('recordHeading').innerText = isToday
+                ? '📅 當日飲食紀錄明細'
+                : `📅 ${formatRecordDate(selectedDate)} 飲食紀錄明細`;
+            const status = document.getElementById('recordStatus');
+            status.innerText = isToday ? '進行中' : '已選日期';
+            status.className = isToday
+                ? 'text-xs bg-blue-950 text-blue-400 border border-blue-800 font-semibold px-3 py-1 rounded-full'
+                : 'text-xs bg-violet-950 text-violet-300 border border-violet-800 font-semibold px-3 py-1 rounded-full';
+        }
+
+        function changeRecordDate(dateKey) {
+            if (!dateKey) return;
+            selectedDate = dateKey;
+            userMeals = getMealsForDate();
+            loadUserData();
+        }
+
+        function setChartRange(days) {
+            chartRange = days;
+            document.querySelectorAll('.chart-range-btn').forEach(button => {
+                const active = Number(button.dataset.chartRange) === days;
+                button.className = active
+                    ? 'chart-range-btn px-3 py-1.5 rounded-lg text-xs font-bold bg-violet-500 text-white'
+                    : 'chart-range-btn px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-800 text-slate-300 hover:text-white';
+            });
+            renderCharts();
+        }
 
         // 渲染使用者選單
         function renderUserDropdown() {
@@ -472,7 +573,7 @@
             currentUser = users.find(u => u.id === currentUserId);
             localStorage.setItem('health_current_user_id', currentUserId);
             
-            userMeals = JSON.parse(localStorage.getItem(`health_meals_${currentUserId}`)) || [];
+            userMeals = getMealsForDate();
             loadUserData();
         }
 
@@ -489,6 +590,8 @@
             document.getElementById('targetC').innerText = currentUser.targetC;
             document.getElementById('targetF').innerText = currentUser.targetF;
 
+            document.getElementById('recordDate').value = selectedDate;
+            updateRecordHeading();
             renderMeals();
         }
 
@@ -553,10 +656,11 @@
                 users = users.filter(u => u.id !== currentUserId);
                 localStorage.setItem('health_users', JSON.stringify(users));
                 localStorage.removeItem(`health_meals_${currentUserId}`);
+                localStorage.removeItem(getDailyLogsKey(currentUserId));
 
                 currentUserId = users[0].id;
                 currentUser = users[0];
-                userMeals = JSON.parse(localStorage.getItem(`health_meals_${currentUserId}`)) || [];
+                userMeals = getMealsForDate();
 
                 renderUserDropdown();
                 loadUserData();
@@ -637,6 +741,7 @@
                     const data = result.data;
                     userMeals.push({
                         id: Date.now(),
+                        createdAt: new Date().toISOString(),
                         type: mealType,
                         name: '📸 ' + (data.mealName || '照片辨識餐點'),
                         calories: data.calories || 350,
@@ -729,7 +834,87 @@
             const calDiff = currentUser.targetCalories - totalCal;
             document.getElementById('calDiffText').innerText = calDiff >= 0 ? `剩餘 ${calDiff} kcal` : `⚠️ 超標 ${Math.abs(calDiff)} kcal`;
 
-            localStorage.setItem(`health_meals_${currentUserId}`, JSON.stringify(userMeals));
+            saveMealsForSelectedDate();
+            renderCharts();
+        }
+
+        function getMealTotals(meals) {
+            return meals.reduce((totals, meal) => ({
+                calories: totals.calories + (Number(meal.calories) || 0),
+                protein: totals.protein + (Number(meal.protein) || 0),
+                carbs: totals.carbs + (Number(meal.carbs) || 0),
+                fat: totals.fat + (Number(meal.fat) || 0)
+            }), { calories: 0, protein: 0, carbs: 0, fat: 0 });
+        }
+
+        function getChartDates() {
+            const end = new Date(`${selectedDate}T00:00:00`);
+            return Array.from({ length: chartRange }, (_, index) => {
+                const date = new Date(end);
+                date.setDate(end.getDate() - (chartRange - 1 - index));
+                const offset = date.getTimezoneOffset() * 60000;
+                return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+            });
+        }
+
+        function renderCharts() {
+            if (!currentUser) return;
+            const logs = getDailyLogs();
+            const dates = getChartDates();
+            const calorieValues = dates.map(date => getMealTotals(logs[date] || []).calories);
+            const maxCalories = Math.max(currentUser.targetCalories, ...calorieValues, 1);
+            const trendRoot = document.getElementById('calorieTrendChart');
+
+            trendRoot.innerHTML = `
+                <div class="h-full flex flex-col">
+                    <div class="flex items-center justify-between text-[11px] text-slate-400 mb-2">
+                        <span><i class="fa-solid fa-square text-cyan-400 mr-1"></i>攝取熱量</span>
+                        <span class="text-violet-300"><i class="fa-solid fa-minus mr-1"></i>目標 ${currentUser.targetCalories} kcal</span>
+                    </div>
+                    <div class="relative flex-1 min-h-0 flex items-end gap-1.5 border-b border-slate-700/80 pt-4">
+                        <div class="absolute inset-x-0 border-t border-dashed border-violet-400/70" style="bottom: ${Math.min(100, (currentUser.targetCalories / maxCalories) * 100)}%"></div>
+                        ${dates.map((date, index) => {
+                            const calories = calorieValues[index];
+                            const height = calories ? Math.max(4, (calories / maxCalories) * 100) : 0;
+                            const label = new Intl.DateTimeFormat('zh-TW', { month: 'numeric', day: 'numeric' }).format(new Date(`${date}T00:00:00`));
+                            return `<div class="relative flex-1 h-full flex flex-col justify-end items-center min-w-0" title="${formatRecordDate(date)}：${calories} kcal">
+                                <span class="text-[10px] text-cyan-200 mb-1">${calories || ''}</span>
+                                <div class="w-full max-w-8 rounded-t-md bg-gradient-to-t from-cyan-600 to-cyan-300 hover:from-cyan-500 hover:to-cyan-200 transition-all" style="height: ${height}%"></div>
+                                <span class="absolute -bottom-5 text-[10px] text-slate-500 whitespace-nowrap">${label}</span>
+                            </div>`;
+                        }).join('')}
+                    </div>
+                    <p class="text-[10px] text-slate-500 mt-6">長條為每日攝取熱量；紫色虛線為你的每日目標。</p>
+                </div>`;
+
+            const totals = getMealTotals(userMeals);
+            const macroValues = [totals.protein, totals.carbs, totals.fat];
+            const macroTotal = macroValues.reduce((sum, value) => sum + value, 0);
+            const macroRoot = document.getElementById('macroChart');
+            document.getElementById('macroChartTitle').innerText = `${selectedDate === getTodayKey() ? '今日' : formatRecordDate(selectedDate)} 三大營養素`;
+
+            if (!macroTotal) {
+                macroRoot.innerHTML = `<div class="h-full flex items-center justify-center text-xs text-slate-500">尚無飲食紀錄</div>`;
+                return;
+            }
+
+            const proteinEnd = (totals.protein / macroTotal) * 100;
+            const carbEnd = proteinEnd + (totals.carbs / macroTotal) * 100;
+            const background = `conic-gradient(#34d399 0 ${proteinEnd}%, #fbbf24 ${proteinEnd}% ${carbEnd}%, #a78bfa ${carbEnd}% 100%)`;
+            macroRoot.innerHTML = `
+                <div class="h-full flex items-center justify-center gap-5">
+                    <div class="relative shrink-0 w-32 h-32 rounded-full" style="background: ${background}">
+                        <div class="absolute inset-4 rounded-full bg-slate-900 flex flex-col items-center justify-center">
+                            <span class="text-lg font-extrabold text-white">${macroTotal}g</span>
+                            <span class="text-[10px] text-slate-400">營養素總量</span>
+                        </div>
+                    </div>
+                    <div class="space-y-2 text-xs">
+                        <p class="text-emerald-300"><i class="fa-solid fa-circle mr-1.5 text-[8px]"></i>蛋白質 <strong class="text-white">${totals.protein}g</strong></p>
+                        <p class="text-amber-300"><i class="fa-solid fa-circle mr-1.5 text-[8px]"></i>碳水 <strong class="text-white">${totals.carbs}g</strong></p>
+                        <p class="text-violet-300"><i class="fa-solid fa-circle mr-1.5 text-[8px]"></i>脂肪 <strong class="text-white">${totals.fat}g</strong></p>
+                    </div>
+                </div>`;
         }
 
         function deleteMeal(idx) {
@@ -763,6 +948,7 @@
                     const data = result.data;
                     userMeals.push({
                         id: Date.now(),
+                        createdAt: new Date().toISOString(),
                         type: mealType,
                         name: data.mealName || mealInput,
                         calories: data.calories || 300,
