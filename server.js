@@ -23,6 +23,124 @@ app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ limit: '20mb', extended: true }));
 app.use(express.static(path.join(__dirname)));
 
+const DEFAULT_PROFILES = [
+    { id: 'u_1', name: '雷米熹', targetWeight: 58, currentWeight: 60, bmr: 1302, targetCalories: 1450, targetP: 105, targetC: 150, targetF: 45, goal: '減重體態雕塑' },
+    { id: 'u_2', name: '小明', targetWeight: 70, currentWeight: 75, bmr: 1680, targetCalories: 2100, targetP: 140, targetC: 220, targetF: 60, goal: '增肌減脂' },
+    { id: 'u_3', name: '莉莉', targetWeight: 50, currentWeight: 52, bmr: 1220, targetCalories: 1350, targetP: 90, targetC: 140, targetF: 40, goal: '健康維持' }
+];
+
+function requireSupabaseConfig() {
+    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
+        throw new Error('共享資料庫尚未設定完成，請在 Render 設定 SUPABASE_URL 與 SUPABASE_SERVICE_ROLE_KEY。');
+    }
+}
+
+async function supabaseRequest(endpoint, options = {}) {
+    requireSupabaseConfig();
+    const response = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${endpoint}`, {
+        ...options,
+        headers: {
+            apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+            Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+            'Content-Type': 'application/json',
+            ...(options.headers || {})
+        }
+    });
+    const body = await response.text();
+    if (!response.ok) throw new Error(`資料庫操作失敗：${body || response.statusText}`);
+    return body ? JSON.parse(body) : null;
+}
+
+function profileToDb(profile) {
+    return {
+        id: String(profile.id), name: String(profile.name).trim(),
+        target_weight: Number(profile.targetWeight), current_weight: Number(profile.currentWeight),
+        bmr: Number(profile.bmr), target_calories: Number(profile.targetCalories),
+        target_protein: Number(profile.targetP), target_carbs: Number(profile.targetC),
+        target_fat: Number(profile.targetF), goal: String(profile.goal).trim()
+    };
+}
+
+function profileToClient(profile) {
+    return {
+        id: profile.id, name: profile.name, targetWeight: Number(profile.target_weight),
+        currentWeight: Number(profile.current_weight), bmr: Number(profile.bmr),
+        targetCalories: Number(profile.target_calories), targetP: Number(profile.target_protein),
+        targetC: Number(profile.target_carbs), targetF: Number(profile.target_fat), goal: profile.goal
+    };
+}
+
+function mealToClient(meal) {
+    return {
+        id: meal.id, profileId: meal.profile_id, recordDate: meal.record_date, type: meal.meal_type,
+        name: meal.name, calories: Number(meal.calories), protein: Number(meal.protein),
+        carbs: Number(meal.carbs), fat: Number(meal.fat), tip: meal.tip || '', analysis: meal.analysis || '',
+        source: meal.source, createdAt: meal.created_at
+    };
+}
+
+async function getSharedRecords() {
+    let profiles = await supabaseRequest('nutrition_profiles?select=*&order=created_at.asc');
+    if (!profiles.length) {
+        profiles = await supabaseRequest('nutrition_profiles?on_conflict=id', {
+            method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+            body: JSON.stringify(DEFAULT_PROFILES.map(profileToDb))
+        });
+    }
+    const meals = await supabaseRequest('nutrition_meals?select=*&order=record_date.desc,created_at.desc');
+    return { profiles: profiles.map(profileToClient), meals: meals.map(mealToClient) };
+}
+
+app.get('/api/shared-records', async (req, res) => {
+    try {
+        res.json({ success: true, data: await getSharedRecords() });
+    } catch (error) {
+        console.error('Shared records load error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/shared-profiles', async (req, res) => {
+    try {
+        const profile = profileToDb(req.body);
+        if (!profile.id || !profile.name || Object.values(profile).some(value => value === '' || value === null || Number.isNaN(value))) {
+            return res.status(400).json({ success: false, error: '使用者資料不完整。' });
+        }
+        const created = await supabaseRequest('nutrition_profiles', {
+            method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(profile)
+        });
+        res.status(201).json({ success: true, data: profileToClient(created[0]) });
+    } catch (error) {
+        console.error('Shared profile create error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/shared-meals', async (req, res) => {
+    try {
+        const input = req.body;
+        const meal = {
+            profile_id: String(input.profileId || ''), record_date: String(input.recordDate || ''),
+            meal_type: String(input.type || '').trim(), name: String(input.name || '').trim(),
+            calories: Math.round(Number(input.calories)), protein: Number(input.protein) || 0,
+            carbs: Number(input.carbs) || 0, fat: Number(input.fat) || 0,
+            tip: String(input.tip || '').trim().slice(0, 1000),
+            analysis: String(input.analysis || '').trim().slice(0, 2000),
+            source: ['photo', 'text', 'manual'].includes(input.source) ? input.source : 'manual'
+        };
+        if (!meal.profile_id || !/^\d{4}-\d{2}-\d{2}$/.test(meal.record_date) || !meal.meal_type || !meal.name || !Number.isFinite(meal.calories) || meal.calories < 0) {
+            return res.status(400).json({ success: false, error: '餐點資料格式不正確。' });
+        }
+        const created = await supabaseRequest('nutrition_meals', {
+            method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(meal)
+        });
+        res.status(201).json({ success: true, data: mealToClient(created[0]) });
+    } catch (error) {
+        console.error('Shared meal create error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // 通用 AI 呼叫處理函式 (支援文字與圖片多模態)
 async function callGemini(apiKey, promptParts, responseJsonFormat = false) {
     const activeKey = apiKey || process.env.GEMINI_API_KEY;
@@ -168,7 +286,8 @@ app.post('/api/parse-food-image', async (req, res) => {
 請仔細觀察這張照片中的食物：
 1. 識別出照片中的主要菜餚、食材與份量。
 2. 估算出此餐點的總熱量(kcal)與三大營養素：蛋白質(g)、碳水化合物(g)、脂肪(g)。
-3. 給予一句親切且具體的營養建議。
+3. 用繁體中文說明辨識依據、可能的份量與熱量估算限制。
+4. 給予一句親切且具體的營養建議。照片辨識與份量估算可能有誤差，不可當作醫療或治療建議。
 
 請【只輸出以下 JSON 格式】（不要包含任何額外說明文字）：
 {
@@ -177,7 +296,8 @@ app.post('/api/parse-food-image', async (req, res) => {
   "protein": 蛋白質估估值(整數g),
   "carbs": 碳水化合物估算值(整數g),
   "fat": 脂肪估算值(整數g),
-  "tip": "針對照片食物的一句話專業點評"
+  "tip": "針對照片食物的一句話專業點評",
+  "analysis": "2 到 4 句繁體中文說明：辨識到的食物與估計份量、熱量／營養素主要來源、估算的不確定性；不可給醫療診斷。"
 }
 `;
 
