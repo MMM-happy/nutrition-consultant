@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>匯出舊飲食紀錄｜營養師顧問</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #020617; color: #e2e8f0; font-family: system-ui, "Noto Sans TC", sans-serif; }
+    main { max-width: 600px; margin: 24px; padding: 32px; border: 1px solid #334155; border-radius: 24px; background: #0f172a; }
+    h1 { margin-top: 0; color: #a7f3d0; font-size: 1.5rem; } p, li { line-height: 1.7; color: #cbd5e1; }
+    button { border: 0; border-radius: 12px; padding: 13px 18px; background: #10b981; color: #052e16; font-size: 1rem; font-weight: 800; cursor: pointer; }
+    button:hover { background: #34d399; } #status { margin-top: 18px; color: #93c5fd; white-space: pre-line; }
+    .warn { border-left: 3px solid #fbbf24; padding-left: 12px; color: #fde68a; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>匯出以前的本機飲食紀錄</h1>
+    <p>請在<strong>存有舊紀錄的同一個瀏覽器</strong>開啟這個檔案。它只會讀取這台電腦本機的舊資料並下載 JSON 備份，不會自行上傳。</p>
+    <ol>
+      <li>按下「下載舊紀錄備份」。</li>
+      <li>前往公開網站，按「匯入舊紀錄」。</li>
+      <li>選擇剛下載的 JSON 檔，確認公開匯入。</li>
+    </ol>
+    <p class="warn">匯入後，姓名／暱稱、餐點與 AI 說明會讓所有訪客瀏覽。請先確認內容沒有敏感個資。</p>
+    <button type="button" onclick="exportRecords()">下載舊紀錄備份</button>
+    <p id="status"></p>
+  </main>
+  <script>
+    const DEFAULT_USERS = [
+      { id: 'u_1', name: '雷米熹', targetWeight: 58, currentWeight: 60, bmr: 1302, targetCalories: 1450, targetP: 105, targetC: 150, targetF: 45, goal: '減重體態雕塑' },
+      { id: 'u_2', name: '小明', targetWeight: 70, currentWeight: 75, bmr: 1680, targetCalories: 2100, targetP: 140, targetC: 220, targetF: 60, goal: '增肌減脂' },
+      { id: 'u_3', name: '莉莉', targetWeight: 50, currentWeight: 52, bmr: 1220, targetCalories: 1350, targetP: 90, targetC: 140, targetF: 40, goal: '健康維持' }
+    ];
+
+    function todayKey() {
+      const now = new Date();
+      const offset = now.getTimezoneOffset() * 60000;
+      return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+    }
+    function loadJson(key, fallback) {
+      try { return JSON.parse(localStorage.getItem(key) || '') || fallback; } catch { return fallback; }
+    }
+    function exportRecords() {
+      const profiles = loadJson('health_users', DEFAULT_USERS);
+      const meals = [];
+      profiles.forEach(profile => {
+        const daily = loadJson(`health_daily_meals_${profile.id}`, {});
+        Object.entries(daily).forEach(([recordDate, records]) => {
+          if (Array.isArray(records)) records.forEach(meal => meals.push({ ...meal, profileId: profile.id, recordDate }));
+        });
+        const legacyList = loadJson(`health_meals_${profile.id}`, []);
+        if (Array.isArray(legacyList)) legacyList.forEach(meal => meals.push({ ...meal, profileId: profile.id, recordDate: meal.recordDate || todayKey() }));
+      });
+      const payload = { format: 'nutrition-consultant-legacy-v1', exportedAt: new Date().toISOString(), profiles, meals };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `nutrition-legacy-records-${todayKey()}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+      document.getElementById('status').textContent = `已準備 ${profiles.length} 位使用者、${meals.length} 筆餐點的備份檔。`;
+    }
+  </script>
+</body>
+</html>

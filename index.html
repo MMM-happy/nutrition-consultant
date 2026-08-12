@@ -90,6 +90,11 @@
                             <i class="fa-solid fa-plus text-[10px]"></i>
                             <span>新增使用者</span>
                         </button>
+                        <button onclick="document.getElementById('legacyImportInput').click()" class="text-xs bg-violet-950 hover:bg-violet-900 text-violet-300 border border-violet-800/80 px-2 py-0.5 rounded-lg transition-colors flex items-center space-x-1">
+                            <i class="fa-solid fa-file-import text-[10px]"></i>
+                            <span>匯入舊紀錄</span>
+                        </button>
+                        <input id="legacyImportInput" type="file" accept="application/json" class="hidden" onchange="importLegacyFile(this)">
                     </div>
                 </div>
             </div>
@@ -525,6 +530,26 @@
             } catch (error) {
                 console.error(error);
                 alert(`共享飲食紀錄目前無法載入：${error.message}`);
+            }
+        }
+
+        async function importLegacyFile(input) {
+            const file = input.files?.[0];
+            input.value = '';
+            if (!file) return;
+            if (!confirm('匯入後，檔案中的使用者名稱、飲食紀錄與 AI 說明將公開給所有訪客瀏覽。確定要繼續嗎？')) return;
+            try {
+                const payload = JSON.parse(await file.text());
+                const response = await fetch('/api/import-legacy-records', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+                if (!result.success) throw new Error(result.error || '無法匯入舊紀錄。');
+                await loadSharedData();
+                alert(`已公開匯入 ${result.data.profiles} 位使用者與 ${result.data.meals} 筆飲食紀錄。重複匯入同一份檔案不會建立重複資料。`);
+            } catch (error) {
+                console.error(error);
+                alert(`舊紀錄匯入失敗：${error.message}`);
             }
         }
 

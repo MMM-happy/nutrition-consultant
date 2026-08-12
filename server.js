@@ -29,19 +29,24 @@ const DEFAULT_PROFILES = [
     { id: 'u_3', name: '莉莉', targetWeight: 50, currentWeight: 52, bmr: 1220, targetCalories: 1350, targetP: 90, targetC: 140, targetF: 40, goal: '健康維持' }
 ];
 
+// 此網站的紀錄設計為所有訪客皆可瀏覽與新增，因此使用 Supabase 可公開的金鑰。
+// 不使用或儲存 service role 私密金鑰，避免把高權限憑證交給網站部署環境。
+const SUPABASE_URL = process.env.SUPABASE_URL || 'https://mwbyhmhkqwrkhfoyqtmo.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_aQauBQxp_Ts1PIuGoqfPQw_d1ApPlmX';
+
 function requireSupabaseConfig() {
-    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-        throw new Error('共享資料庫尚未設定完成，請在 Render 設定 SUPABASE_URL 與 SUPABASE_SERVICE_ROLE_KEY。');
+    if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
+        throw new Error('共享資料庫連線尚未設定完成。');
     }
 }
 
 async function supabaseRequest(endpoint, options = {}) {
     requireSupabaseConfig();
-    const response = await fetch(`${process.env.SUPABASE_URL}/rest/v1/${endpoint}`, {
+    const response = await fetch(`${SUPABASE_URL}/rest/v1/${endpoint}`, {
         ...options,
         headers: {
-            apikey: process.env.SUPABASE_SERVICE_ROLE_KEY,
-            Authorization: `Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`,
+            apikey: SUPABASE_PUBLISHABLE_KEY,
+            Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
             'Content-Type': 'application/json',
             ...(options.headers || {})
         }
@@ -49,6 +54,19 @@ async function supabaseRequest(endpoint, options = {}) {
     const body = await response.text();
     if (!response.ok) throw new Error(`資料庫操作失敗：${body || response.statusText}`);
     return body ? JSON.parse(body) : null;
+}
+
+const publicWriteWindow = new Map();
+function limitPublicWrites(req, res, next) {
+    const now = Date.now();
+    const key = req.ip || 'unknown';
+    const history = (publicWriteWindow.get(key) || []).filter(timestamp => now - timestamp < 15 * 60 * 1000);
+    if (history.length >= 60) {
+        return res.status(429).json({ success: false, error: '請稍後再試，避免短時間送出過多資料。' });
+    }
+    history.push(now);
+    publicWriteWindow.set(key, history);
+    next();
 }
 
 function profileToDb(profile) {
@@ -83,7 +101,7 @@ async function getSharedRecords() {
     let profiles = await supabaseRequest('nutrition_profiles?select=*&order=created_at.asc');
     if (!profiles.length) {
         profiles = await supabaseRequest('nutrition_profiles?on_conflict=id', {
-            method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+            method: 'POST', headers: { Prefer: 'resolution=ignore-duplicates,return=representation' },
             body: JSON.stringify(DEFAULT_PROFILES.map(profileToDb))
         });
     }
@@ -100,7 +118,7 @@ app.get('/api/shared-records', async (req, res) => {
     }
 });
 
-app.post('/api/shared-profiles', async (req, res) => {
+app.post('/api/shared-profiles', limitPublicWrites, async (req, res) => {
     try {
         const profile = profileToDb(req.body);
         if (!profile.id || !profile.name || Object.values(profile).some(value => value === '' || value === null || Number.isNaN(value))) {
@@ -116,7 +134,7 @@ app.post('/api/shared-profiles', async (req, res) => {
     }
 });
 
-app.post('/api/shared-meals', async (req, res) => {
+app.post('/api/shared-meals', limitPublicWrites, async (req, res) => {
     try {
         const input = req.body;
         const meal = {
@@ -137,6 +155,47 @@ app.post('/api/shared-meals', async (req, res) => {
         res.status(201).json({ success: true, data: mealToClient(created[0]) });
     } catch (error) {
         console.error('Shared meal create error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/import-legacy-records', limitPublicWrites, async (req, res) => {
+    try {
+        const payload = req.body || {};
+        if (payload.format !== 'nutrition-consultant-legacy-v1' || !Array.isArray(payload.profiles) || !Array.isArray(payload.meals)) {
+            return res.status(400).json({ success: false, error: '匯入檔格式不正確。' });
+        }
+        if (payload.profiles.length > 60 || payload.meals.length > 2000) {
+            return res.status(400).json({ success: false, error: '單次最多可匯入 60 位使用者與 2,000 筆餐點。' });
+        }
+
+        const profiles = payload.profiles.map(profileToDb).filter(profile =>
+            profile.id && profile.name && !Object.values(profile).some(value => value === '' || value === null || Number.isNaN(value))
+        );
+        if (!profiles.length) return res.status(400).json({ success: false, error: '匯入檔中沒有有效的使用者資料。' });
+
+        await supabaseRequest('nutrition_profiles?on_conflict=id', {
+            method: 'POST', headers: { Prefer: 'resolution=ignore-duplicates,return=minimal' }, body: JSON.stringify(profiles)
+        });
+
+        const meals = payload.meals.map((input, index) => ({
+            profile_id: String(input.profileId || ''), record_date: String(input.recordDate || ''),
+            meal_type: String(input.type || '').trim().slice(0, 30), name: String(input.name || '').trim().slice(0, 200),
+            calories: Math.round(Number(input.calories)), protein: Number(input.protein) || 0,
+            carbs: Number(input.carbs) || 0, fat: Number(input.fat) || 0,
+            tip: String(input.tip || '').trim().slice(0, 1000), analysis: String(input.analysis || '').trim().slice(0, 2000),
+            source: ['photo', 'text', 'manual'].includes(input.source) ? input.source : 'manual',
+            legacy_key: `legacy:${String(input.profileId || '')}:${String(input.recordDate || '')}:${index}:${String(input.name || '').slice(0, 80)}`
+        })).filter(meal => meal.profile_id && /^\d{4}-\d{2}-\d{2}$/.test(meal.record_date) && meal.meal_type && meal.name && Number.isFinite(meal.calories) && meal.calories >= 0);
+
+        if (meals.length) {
+            await supabaseRequest('nutrition_meals?on_conflict=legacy_key', {
+                method: 'POST', headers: { Prefer: 'resolution=ignore-duplicates,return=minimal' }, body: JSON.stringify(meals)
+            });
+        }
+        res.json({ success: true, data: { profiles: profiles.length, meals: meals.length } });
+    } catch (error) {
+        console.error('Legacy records import error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
