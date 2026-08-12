@@ -148,10 +148,11 @@ app.post('/api/shared-profiles', limitPublicWrites, async (req, res) => {
         if (!profile.id || !profile.name || Object.values(profile).some(value => value === '' || value === null || Number.isNaN(value))) {
             return res.status(400).json({ success: false, error: '使用者資料不完整。' });
         }
-        const created = await supabaseRequest('nutrition_profiles', {
-            method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(profile)
+        const created = await supabaseRequest('nutrition_profiles?on_conflict=id', {
+            method: 'POST', headers: { Prefer: 'resolution=ignore-duplicates,return=representation' }, body: JSON.stringify(profile)
         });
-        res.status(201).json({ success: true, data: profileToClient(created[0]) });
+        const stored = created[0] || (await supabaseRequest(`nutrition_profiles?id=eq.${encodeURIComponent(profile.id)}&limit=1`))[0];
+        res.status(201).json({ success: true, data: profileToClient(stored) });
     } catch (error) {
         console.error('Shared profile create error:', error);
         res.status(500).json({ success: false, error: error.message });

@@ -177,6 +177,44 @@
             } catch (error) { alert(`清空失敗：${error.message}`); }
         }
 
+        document.addEventListener('submit', async (event) => {
+            if (event.target?.id !== 'addUserForm') return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            const name = document.getElementById('newUserName').value.trim();
+            const height = Number(document.getElementById('newUserHeight').value);
+            const weight = Number(document.getElementById('newUserWeight').value);
+            const targetWeight = Number(document.getElementById('newUserTargetWeight').value);
+            const gender = document.getElementById('newUserGender').value;
+            const goal = document.getElementById('newUserGoal').value;
+            const bmr = Math.round((10 * weight) + (6.25 * height) - (5 * 28) + (gender === 'male' ? 5 : -161));
+            const targetCalories = Math.round(bmr * 1.35) + (goal === '增肌維持' ? 300 : goal === '減脂瘦身' ? -300 : 0);
+            const targetP = Math.round(weight * 1.8);
+            const targetF = Math.round((targetCalories * 0.25) / 9);
+            const newUser = { id: `u_${Date.now()}`, name, currentWeight: weight, targetWeight, bmr, targetCalories, targetP, targetC: Math.round((targetCalories - targetP * 4 - targetF * 9) / 4), targetF, goal };
+            if (!name || !height || !weight || !targetWeight) return alert('請完整填寫使用者資料。');
+            try {
+                const savedUser = await postSharedRecord('/api/shared-profiles', { ...newUser, syncKey: newUser.id });
+                users.push(savedUser);
+                currentUserId = savedUser.id;
+                currentUser = savedUser;
+                alert(`已新增使用者「${name}」。`);
+            } catch (error) {
+                if (!error.canRetry) return alert(`新增使用者失敗：${error.message}`);
+                queuePendingUpload('/api/shared-profiles', { ...newUser, syncKey: newUser.id });
+                users.push(newUser);
+                currentUserId = newUser.id;
+                currentUser = newUser;
+                alert('目前無法連上雲端，使用者資料已安全暫存在此裝置，恢復網路後會自動同步。');
+            }
+            localStorage.setItem('health_current_user_id', currentUserId);
+            userMeals = [];
+            renderUserDropdown();
+            loadUserData();
+            saveDeviceBackup();
+            closeAddUserModal();
+        }, true);
+
         window.addEventListener('online', async () => { if (await flushPendingUploads()) loadSharedData(); });
     </script>
 
