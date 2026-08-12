@@ -292,7 +292,10 @@ async function callGemini(apiKey, promptParts, responseJsonFormat = false) {
     }
 
     const ai = new GoogleGenerativeAI(activeKey);
-    const candidateModels = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-2.0-flash', 'gemini-3.6-flash', 'gemini-pro'];
+    const candidateModels = [
+        'gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-3.5-flash',
+        'gemini-2.0-flash', 'gemini-1.5-flash-latest', 'gemini-1.5-flash'
+    ];
 
     let lastError = null;
 
@@ -318,10 +321,8 @@ async function callGemini(apiKey, promptParts, responseJsonFormat = false) {
         const listData = await listRes.json();
         
         if (listData.models && listData.models.length > 0) {
-            const validModels = listData.models.filter(m => 
-                m.supportedGenerationMethods && 
-                m.supportedGenerationMethods.includes('generateContent') &&
-                !m.name.includes('gemini-2.5-flash')
+            const validModels = listData.models.filter(m =>
+                m.supportedGenerationMethods && m.supportedGenerationMethods.includes('generateContent')
             );
             
             for (const validModel of validModels) {

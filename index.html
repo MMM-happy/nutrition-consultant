@@ -1248,18 +1248,16 @@
             btnText.innerText = 'AI 正在影像辨識與計算熱量中...';
 
             try {
-                const res = await fetch('/api/parse-food-image', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        imageBase64: selectedBase64Image,
-                        mimeType: selectedImageMimeType,
-                        mealType,
-                        apiKey
-                    })
-                });
-
-                const result = await res.json();
+                const requestBody = JSON.stringify({ imageBase64: selectedBase64Image, mimeType: selectedImageMimeType, mealType, apiKey });
+                let res;
+                try {
+                    res = await fetch('/api/parse-food-image', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: requestBody });
+                } catch (firstError) {
+                    btnText.innerText = '伺服器正在啟動，重新連線中...';
+                    await new Promise(resolve => setTimeout(resolve, 3500));
+                    res = await fetch('/api/parse-food-image', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: requestBody });
+                }
+                const result = await res.json().catch(() => ({ success: false, error: `伺服器回應異常（${res.status}），請稍後再試。` }));
                 if (result.success) {
                     const data = result.data;
                     await saveSharedMeal({
@@ -1278,10 +1276,10 @@
                     clearPhoto();
                     alert(`🎉 辨識成功！已為 ${currentUser.name} 新增：${data.mealName} (約 ${data.calories} kcal)`);
                 } else {
-                    alert('分析失敗: ' + result.error);
+                    alert('照片分析失敗：' + (result.error || '請稍後再試。'));
                 }
             } catch (err) {
-                alert('無法連線至伺服器，請確認伺服器是否正常運行！');
+                alert('目前無法連上伺服器。免費主機剛啟動時可能需要約 50 秒，請稍候後再試。');
             } finally {
                 btn.disabled = false;
                 btnText.innerText = '🤖 AI 視覺辨識照片並計算熱量';
