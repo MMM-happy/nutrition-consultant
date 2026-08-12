@@ -380,10 +380,49 @@ async function callGemini(apiKey, promptParts, responseJsonFormat = false) {
     throw new Error(`無法連接 Gemini API。最後錯誤: ${lastError ? lastError.message : '未知錯誤'}`);
 }
 
+function validatePhotoPayload(imageBase64, mimeType) {
+    const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+    if (!allowedTypes.has(mimeType)) throw new Error('照片格式僅支援 JPG、PNG 或 WebP。');
+    const cleanBase64 = String(imageBase64 || '').replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '');
+    if (!cleanBase64 || !/^[A-Za-z0-9+/=\s]+$/.test(cleanBase64)) throw new Error('照片資料格式不正確。');
+    const imageBuffer = Buffer.from(cleanBase64, 'base64');
+    if (!imageBuffer.length || imageBuffer.length > 6 * 1024 * 1024) throw new Error('照片大小請小於 6MB。');
+    return cleanBase64;
+}
+
+function parseAiJson(jsonText) {
+    const text = String(jsonText || '').trim();
+    const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    const candidate = (fenced ? fenced[1] : text).trim();
+    const start = candidate.indexOf('{');
+    const end = candidate.lastIndexOf('}');
+    if (start < 0 || end < start) throw new Error('AI 回覆格式不完整，請再試一次。');
+    try {
+        return JSON.parse(candidate.slice(start, end + 1));
+    } catch {
+        throw new Error('AI 回覆格式暫時無法解析，請再試一次。');
+    }
+}
+
+function normalizeMealAnalysis(data) {
+    const numeric = key => {
+        const value = Number(data?.[key]);
+        return Number.isFinite(value) && value >= 0 ? Math.round(value) : 0;
+    };
+    const mealName = String(data?.mealName || '').trim().slice(0, 200);
+    if (!mealName) throw new Error('AI 未辨識出可儲存的餐點名稱，請換一張較清楚的照片。');
+    return {
+        mealName,
+        calories: numeric('calories'), protein: numeric('protein'), carbs: numeric('carbs'), fat: numeric('fat'),
+        tip: String(data?.tip || '').trim().slice(0, 1000),
+        analysis: String(data?.analysis || '').trim().slice(0, 2000)
+    };
+}
+
 // ---------------------------------------------------------
 // 1. 智遊秘書 AI 助理：旅遊行程生成 API
 // ---------------------------------------------------------
-app.post('/api/generate-plan', async (req, res) => {
+app.post('/api/generate-plan', limitPublicWrites, async (req, res) => {
     try {
         let { destination, days, travelStyle = '綜合探索', apiKey: customApiKey } = req.body;
 
@@ -408,7 +447,7 @@ app.post('/api/generate-plan', async (req, res) => {
 // ---------------------------------------------------------
 // 2. AI 專屬營養師：自然語言飲食分析 API
 // ---------------------------------------------------------
-app.post('/api/parse-meal', async (req, res) => {
+app.post('/api/parse-meal', limitPublicWrites, async (req, res) => {
     try {
         const { mealInput, mealType = '午餐', apiKey } = req.body;
 
@@ -433,8 +472,7 @@ app.post('/api/parse-meal', async (req, res) => {
 
         console.log(`[AI 營養師] 正在分析文字餐點: "${mealInput}"...`);
         const jsonText = await callGemini(apiKey, [prompt], true);
-        const cleanJson = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
-        const data = JSON.parse(cleanJson);
+        const data = normalizeMealAnalysis(parseAiJson(jsonText));
 
         return res.json({ success: true, data });
     } catch (error) {
@@ -446,7 +484,7 @@ app.post('/api/parse-meal', async (req, res) => {
 // ---------------------------------------------------------
 // 3. ✨【全新功能】AI 專屬營養師：食物照片 Vision 辨識分析 API
 // ---------------------------------------------------------
-app.post('/api/parse-food-image', async (req, res) => {
+app.post('/api/parse-food-image', limitPublicWrites, async (req, res) => {
     try {
         const { imageBase64, mimeType = 'image/jpeg', mealType = '午餐', apiKey } = req.body;
 
@@ -454,8 +492,7 @@ app.post('/api/parse-food-image', async (req, res) => {
             return res.status(400).json({ success: false, error: '請上傳或拍攝一張食物照片！' });
         }
 
-        // 移除可能的 data:image/jpeg;base64, 前綴
-        const cleanBase64 = imageBase64.replace(/^data:image\/\w+;base64,/, '');
+        const cleanBase64 = validatePhotoPayload(imageBase64, mimeType);
 
         const prompt = `
 你是一位具備視覺影像辨識能力的頂尖專業營養師與美食熱量專家。
@@ -486,8 +523,7 @@ app.post('/api/parse-food-image', async (req, res) => {
 
         console.log(`[AI 營養師 Vision] 正在對食物照片進行 Vision 辨識與營養分析...`);
         const jsonText = await callGemini(apiKey, [prompt, imagePart], true);
-        const cleanJson = jsonText.replace(/```json/g, '').replace(/```/g, '').trim();
-        const data = JSON.parse(cleanJson);
+        const data = normalizeMealAnalysis(parseAiJson(jsonText));
 
         return res.json({ success: true, data });
 
@@ -500,7 +536,7 @@ app.post('/api/parse-food-image', async (req, res) => {
 // ---------------------------------------------------------
 // 4. AI 專屬營養師：菜單推薦 API
 // ---------------------------------------------------------
-app.post('/api/recommend-meal', async (req, res) => {
+app.post('/api/recommend-meal', limitPublicWrites, async (req, res) => {
     try {
         const { targetCalories, targetP, targetC, targetF, currentCalories, currentP, currentC, currentF, apiKey } = req.body;
 

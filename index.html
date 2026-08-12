@@ -1040,24 +1040,25 @@
         }
 
         async function addWater(volumeMl) {
+            if (!currentUser) return alert('請先新增使用者。');
             const amount = Math.round(Number(volumeMl));
             if (!Number.isInteger(amount) || amount < 1 || amount > 5000) {
                 alert('請輸入 1–5,000 ml 的喝水量。');
                 return;
             }
+            const payload = { profileId: currentUserId, recordDate: selectedDate, volumeMl: amount, syncKey: createSyncKey('water') };
             try {
-                const response = await fetch('/api/shared-water', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ profileId: currentUserId, recordDate: selectedDate, volumeMl: amount })
-                });
-                const result = await response.json();
-                if (!result.success) throw new Error(result.error || '無法儲存喝水紀錄。');
-                allWater.unshift(result.data);
-                document.getElementById('waterAmountInput').value = '';
-                renderWater();
+                const saved = await postSharedRecord('/api/shared-water', payload);
+                allWater.unshift(saved);
             } catch (error) {
-                alert(`喝水紀錄儲存失敗：${error.message}`);
+                if (!error.canRetry) return alert(`喝水紀錄儲存失敗：${error.message}`);
+                queuePendingUpload('/api/shared-water', payload);
+                allWater.unshift({ ...payload, id: `pending-${payload.syncKey}`, createdAt: new Date().toISOString(), pending: true });
+                alert('目前無法連上雲端，喝水紀錄已安全暫存在此裝置，恢復網路後會自動同步。');
             }
+            document.getElementById('waterAmountInput').value = '';
+            renderWater();
+            saveDeviceBackup();
         }
 
         function addCustomWater() {
@@ -1133,6 +1134,14 @@
         function renderUserDropdown() {
             const selectEl = document.getElementById('userSelect');
             selectEl.innerHTML = '';
+            selectEl.disabled = users.length === 0;
+            if (!users.length) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.innerText = '尚無使用者';
+                selectEl.appendChild(option);
+                return;
+            }
             users.forEach(u => {
                 const opt = document.createElement('option');
                 opt.value = u.id;
@@ -1144,6 +1153,7 @@
 
         // 切換使用者
         function changeUser() {
+            if (!users.length) return;
             currentUserId = document.getElementById('userSelect').value;
             currentUser = users.find(u => u.id === currentUserId);
             localStorage.setItem('health_current_user_id', currentUserId);
@@ -1154,6 +1164,16 @@
 
         // 載入與計算目前使用者資料
         function loadUserData() {
+            if (!currentUser) {
+                document.getElementById('userDisplayName').innerText = '尚無使用者';
+                document.getElementById('userAvatar').innerText = '?';
+                document.getElementById('userGoalBadge').innerText = '請新增使用者以開始記錄';
+                document.getElementById('userInfoSub').innerText = '目前沒有公開使用者或飲食紀錄。';
+                document.getElementById('headerBmr').innerText = 'BMR: —';
+                ['targetCal', 'targetP', 'targetC', 'targetF'].forEach(id => document.getElementById(id).innerText = '—');
+                document.getElementById('todayMealList').innerHTML = '<div class="text-center py-8 text-slate-400 text-sm">目前沒有使用者。請點擊「新增使用者」建立第一份公開紀錄。</div>';
+                return;
+            }
             document.getElementById('userDisplayName').innerText = currentUser.name;
             document.getElementById('userAvatar').innerText = currentUser.name.charAt(0);
             document.getElementById('userGoalBadge').innerText = `${currentUser.goal} | 目標體重 ${currentUser.targetWeight} kg`;
