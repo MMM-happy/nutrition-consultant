@@ -965,14 +965,19 @@
         }
 
         async function saveSharedMeal(meal) {
-            const response = await fetch('/api/shared-meals', {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...meal, profileId: currentUserId, recordDate: selectedDate })
-            });
-            const result = await response.json();
-            if (!result.success) throw new Error(result.error || '儲存共享紀錄失敗。');
-            allMeals.unshift(result.data);
+            const payload = { ...meal, profileId: currentUserId, recordDate: selectedDate, syncKey: createSyncKey('meal') };
+            try {
+                const saved = await postSharedRecord('/api/shared-meals', payload);
+                allMeals.unshift(saved);
+            } catch (error) {
+                // 圖片必須先完成雲端備份，避免離線暫存大檔而遺失或佔滿手機空間。
+                if (payload.photoBase64 || !error.canRetry) throw error;
+                queuePendingUpload('/api/shared-meals', payload);
+                allMeals.unshift({ ...payload, id: `pending-${payload.syncKey}`, createdAt: new Date().toISOString(), pending: true });
+                alert('目前無法連上雲端，這筆文字飲食已安全暫存在此裝置，恢復網路後會自動同步。');
+            }
             userMeals = getMealsForDate();
+            saveDeviceBackup();
         }
 
         function roundWaterGoal(value) {
@@ -1213,6 +1218,17 @@
         function handlePhotoSelect(e) {
             const file = e.target.files[0];
             if (!file) return;
+            const supportedImageTypes = ['image/jpeg', 'image/png', 'image/webp'];
+            if (!supportedImageTypes.includes(file.type)) {
+                e.target.value = '';
+                alert('公開相簿目前支援 JPG、PNG 或 WebP 圖片。');
+                return;
+            }
+            if (file.size > 6 * 1024 * 1024) {
+                e.target.value = '';
+                alert('照片請小於 6MB，才能完成公開雲端備份。');
+                return;
+            }
             selectedImageMimeType = file.type || 'image/jpeg';
             document.getElementById('photoFileName').innerText = file.name;
 
@@ -1269,7 +1285,9 @@
                         fat: data.fat || 12,
                         tip: data.tip || '',
                         analysis: data.analysis || '此為 AI 依照片中的食材與可見份量進行的估算，實際烹調用油、醬料與份量可能造成差異。',
-                        source: 'photo'
+                        source: 'photo',
+                        photoBase64: selectedBase64Image,
+                        photoMimeType: selectedImageMimeType
                     });
 
                     renderMeals();
@@ -1325,6 +1343,7 @@
                     </div>
                     ${meal.tip ? `<p class="text-[11px] text-cyan-300/90 bg-cyan-950/40 p-2 rounded-xl border border-cyan-900/30">💡 AI 觀點：${escapeHtml(meal.tip)}</p>` : ''}
                     ${meal.analysis ? `<p class="text-[11px] text-slate-300 bg-violet-950/30 p-2 rounded-xl border border-violet-900/30"><span class="font-bold text-violet-300">📷 照片／營養說明：</span>${escapeHtml(meal.analysis)}</p>` : ''}
+                    ${meal.photoUrl ? `<figure class="overflow-hidden rounded-xl border border-cyan-900/60 bg-slate-950/60"><img src="${escapeHtml(meal.photoUrl)}" alt="${escapeHtml(meal.recordDate)} ${escapeHtml(meal.type)}餐點照片" loading="lazy" class="h-52 w-full object-cover"><figcaption class="flex items-center justify-between px-3 py-2 text-[11px] text-cyan-100"><span>📅 ${escapeHtml(formatRecordDate(meal.recordDate))}</span><span>🍽️ ${escapeHtml(meal.type)}</span></figcaption></figure>` : ''}
                 `;
                 listEl.appendChild(card);
             });

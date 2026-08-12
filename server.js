@@ -33,6 +33,7 @@ const DEFAULT_PROFILES = [
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://mwbyhmhkqwrkhfoyqtmo.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_aQauBQxp_Ts1PIuGoqfPQw_d1ApPlmX';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const MEAL_PHOTO_BUCKET = 'meal-photos';
 const adminSessions = new Map();
 
 function requireSupabaseConfig() {
@@ -55,6 +56,34 @@ async function supabaseRequest(endpoint, options = {}) {
     const body = await response.text();
     if (!response.ok) throw new Error(`資料庫操作失敗：${body || response.statusText}`);
     return body ? JSON.parse(body) : null;
+}
+
+async function uploadPublicMealPhoto(base64Input, mimeType, profileId, recordDate) {
+    if (!base64Input) return null;
+    const allowedTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
+    if (!allowedTypes.has(mimeType)) throw new Error('照片格式僅支援 JPG、PNG 或 WebP。');
+
+    const cleanBase64 = String(base64Input).replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '');
+    const imageBuffer = Buffer.from(cleanBase64, 'base64');
+    if (!imageBuffer.length || imageBuffer.length > 6 * 1024 * 1024) {
+        throw new Error('照片大小請小於 6MB。');
+    }
+
+    const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg';
+    const safeProfileId = String(profileId).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80);
+    const objectPath = `${safeProfileId}/${recordDate}/${Date.now()}-${crypto.randomUUID()}.${extension}`;
+    const response = await fetch(`${SUPABASE_URL}/storage/v1/object/${MEAL_PHOTO_BUCKET}/${objectPath}`, {
+        method: 'POST',
+        headers: {
+            apikey: SUPABASE_PUBLISHABLE_KEY,
+            Authorization: `Bearer ${SUPABASE_PUBLISHABLE_KEY}`,
+            'Content-Type': mimeType,
+            'x-upsert': 'false'
+        },
+        body: imageBuffer
+    });
+    if (!response.ok) throw new Error(`照片雲端備份失敗：${await response.text() || response.statusText}`);
+    return `${SUPABASE_URL}/storage/v1/object/public/${MEAL_PHOTO_BUCKET}/${objectPath}`;
 }
 
 const publicWriteWindow = new Map();
@@ -110,7 +139,7 @@ function mealToClient(meal) {
         id: meal.id, profileId: meal.profile_id, recordDate: meal.record_date, type: meal.meal_type,
         name: meal.name, calories: Number(meal.calories), protein: Number(meal.protein),
         carbs: Number(meal.carbs), fat: Number(meal.fat), tip: meal.tip || '', analysis: meal.analysis || '',
-        source: meal.source, createdAt: meal.created_at
+        source: meal.source, photoUrl: meal.photo_url || '', createdAt: meal.created_at
     };
 }
 
@@ -176,6 +205,9 @@ app.post('/api/shared-meals', limitPublicWrites, async (req, res) => {
             return res.status(400).json({ success: false, error: '餐點資料格式不正確。' });
         }
         if (!meal.sync_key) return res.status(400).json({ success: false, error: 'Missing sync key.' });
+        if (input.photoBase64) {
+            meal.photo_url = await uploadPublicMealPhoto(input.photoBase64, String(input.photoMimeType || 'image/jpeg'), meal.profile_id, meal.record_date);
+        }
         const created = await supabaseRequest('nutrition_meals?on_conflict=sync_key', {
             method: 'POST', headers: { Prefer: 'resolution=ignore-duplicates,return=representation' }, body: JSON.stringify(meal)
         });
