@@ -108,6 +108,13 @@
         </div>
     </header>
 
+    <div class="max-w-6xl mx-auto px-4 sm:px-6 pt-4">
+        <div class="flex items-start gap-2 rounded-2xl border border-amber-700/50 bg-amber-950/30 px-4 py-3 text-xs text-amber-100/90">
+            <i class="fa-solid fa-users-viewfinder mt-0.5 text-amber-300"></i>
+            <p><strong class="text-amber-200">共享紀錄模式：</strong>新增的飲食紀錄與 AI 說明會提供所有訪客瀏覽。請使用暱稱，避免填寫病歷、用藥、聯絡方式或其他敏感個資。</p>
+        </div>
+    </div>
+
     <main class="max-w-6xl mx-auto px-4 sm:px-6 pt-8 space-y-8">
 
         <!-- User Info Badge & Target Bar -->
@@ -465,12 +472,11 @@
             }
         ];
 
-        let users = JSON.parse(localStorage.getItem('health_users')) || DEFAULT_USERS;
-        let currentUserId = localStorage.getItem('health_current_user_id') || users[0].id;
-        let currentUser = users.find(u => u.id === currentUserId) || users[0];
-
-        // 每位使用者的飲食資料依日期保存：{ "YYYY-MM-DD": [meal, ...] }
-        // 舊版的單一清單會在第一次開啟時自動搬到今天，不會遺失既有紀錄。
+        // 使用者與餐點儲存在伺服器的共享資料庫；localStorage 僅保留本機目前選擇的使用者。
+        let users = [];
+        let allMeals = [];
+        let currentUserId = localStorage.getItem('health_current_user_id');
+        let currentUser = null;
         let selectedDate = getTodayKey();
         let userMeals = [];
         let chartRange = 7;
@@ -478,11 +484,9 @@
         let selectedBase64Image = null;
         let selectedImageMimeType = 'image/jpeg';
 
-        window.addEventListener('DOMContentLoaded', () => {
-            renderUserDropdown();
+        window.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('recordDate').value = selectedDate;
-            userMeals = getMealsForDate();
-            loadUserData();
+            await loadSharedData();
         });
 
         function getTodayKey() {
@@ -491,32 +495,48 @@
             return new Date(now.getTime() - offset).toISOString().slice(0, 10);
         }
 
-        function getDailyLogsKey(userId = currentUserId) {
-            return `health_daily_meals_${userId}`;
-        }
-
-        function getDailyLogs(userId = currentUserId) {
-            const storageKey = getDailyLogsKey(userId);
-            const storedLogs = localStorage.getItem(storageKey);
-            if (storedLogs) {
-                try { return JSON.parse(storedLogs) || {}; } catch (error) { return {}; }
-            }
-
-            const legacyMeals = JSON.parse(localStorage.getItem(`health_meals_${userId}`)) || [];
-            const migratedLogs = legacyMeals.length ? { [getTodayKey()]: legacyMeals } : {};
-            localStorage.setItem(storageKey, JSON.stringify(migratedLogs));
-            return migratedLogs;
-        }
-
         function getMealsForDate() {
-            const logs = getDailyLogs();
-            return Array.isArray(logs[selectedDate]) ? logs[selectedDate] : [];
+            return allMeals.filter(meal => meal.profileId === currentUserId && meal.recordDate === selectedDate);
         }
 
-        function saveMealsForSelectedDate() {
-            const logs = getDailyLogs();
-            logs[selectedDate] = userMeals;
-            localStorage.setItem(getDailyLogsKey(), JSON.stringify(logs));
+        function getDailyLogs() {
+            return allMeals
+                .filter(meal => meal.profileId === currentUserId)
+                .reduce((logs, meal) => {
+                    (logs[meal.recordDate] ||= []).push(meal);
+                    return logs;
+                }, {});
+        }
+
+        async function loadSharedData() {
+            try {
+                const response = await fetch('/api/shared-records');
+                const result = await response.json();
+                if (!result.success) throw new Error(result.error || '無法讀取共享紀錄。');
+                users = result.data.profiles;
+                allMeals = result.data.meals;
+                currentUserId = users.some(user => user.id === currentUserId) ? currentUserId : users[0]?.id;
+                currentUser = users.find(user => user.id === currentUserId);
+                if (!currentUser) throw new Error('找不到可使用的健康檔案。');
+                localStorage.setItem('health_current_user_id', currentUserId);
+                userMeals = getMealsForDate();
+                renderUserDropdown();
+                loadUserData();
+            } catch (error) {
+                console.error(error);
+                alert(`共享飲食紀錄目前無法載入：${error.message}`);
+            }
+        }
+
+        async function saveSharedMeal(meal) {
+            const response = await fetch('/api/shared-meals', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...meal, profileId: currentUserId, recordDate: selectedDate })
+            });
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error || '儲存共享紀錄失敗。');
+            allMeals.unshift(result.data);
+            userMeals = getMealsForDate();
         }
 
         function formatRecordDate(dateKey) {
@@ -600,7 +620,7 @@
         function closeAddUserModal() { document.getElementById('addUserModal').classList.add('hidden'); }
 
         // 新增使用者表單提交 (自動計算 BMR 與 TDEE)
-        document.getElementById('addUserForm').addEventListener('submit', function(e) {
+        document.getElementById('addUserForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             const name = document.getElementById('newUserName').value.trim();
             const height = parseFloat(document.getElementById('newUserHeight').value);
@@ -633,38 +653,29 @@
                 goal
             };
 
-            users.push(newUser);
-            localStorage.setItem('health_users', JSON.stringify(users));
-            
-            currentUserId = newUser.id;
-            currentUser = newUser;
-            userMeals = [];
-
-            renderUserDropdown();
-            loadUserData();
-            closeAddUserModal();
-            alert(`🎉 成功建立使用者「${name}」！自動計算 BMR: ${bmr} kcal, 建議熱量: ${targetCalories} kcal`);
+            try {
+                const response = await fetch('/api/shared-profiles', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newUser)
+                });
+                const result = await response.json();
+                if (!result.success) throw new Error(result.error || '建立共享使用者失敗。');
+                users.push(result.data);
+                currentUserId = result.data.id;
+                currentUser = result.data;
+                localStorage.setItem('health_current_user_id', currentUserId);
+                userMeals = [];
+                renderUserDropdown();
+                loadUserData();
+                closeAddUserModal();
+                alert(`🎉 已建立共享使用者「${name}」！所有訪客都能查看此檔案與後續飲食紀錄。`);
+            } catch (error) {
+                alert(`建立失敗：${error.message}`);
+            }
         });
 
         // 刪除目前使用者 Profile
         function deleteCurrentProfile() {
-            if (users.length <= 1) {
-                alert('至少需保留一位使用者！');
-                return;
-            }
-            if (confirm(`確定要刪除「${currentUser.name}」的 Profile 嗎？`)) {
-                users = users.filter(u => u.id !== currentUserId);
-                localStorage.setItem('health_users', JSON.stringify(users));
-                localStorage.removeItem(`health_meals_${currentUserId}`);
-                localStorage.removeItem(getDailyLogsKey(currentUserId));
-
-                currentUserId = users[0].id;
-                currentUser = users[0];
-                userMeals = getMealsForDate();
-
-                renderUserDropdown();
-                loadUserData();
-            }
+            alert('為保護共享紀錄，公開模式暫不開放刪除使用者。若要管理或刪除資料，下一步可加入管理員登入。');
         }
 
         // 模式切換 (Photo vs Text)
@@ -739,16 +750,16 @@
                 const result = await res.json();
                 if (result.success) {
                     const data = result.data;
-                    userMeals.push({
-                        id: Date.now(),
-                        createdAt: new Date().toISOString(),
+                    await saveSharedMeal({
                         type: mealType,
                         name: '📸 ' + (data.mealName || '照片辨識餐點'),
                         calories: data.calories || 350,
                         protein: data.protein || 20,
                         carbs: data.carbs || 30,
                         fat: data.fat || 12,
-                        tip: data.tip || ''
+                        tip: data.tip || '',
+                        analysis: data.analysis || '此為 AI 依照片中的食材與可見份量進行的估算，實際烹調用油、醬料與份量可能造成差異。',
+                        source: 'photo'
                     });
 
                     renderMeals();
@@ -766,6 +777,12 @@
         }
 
         // 渲染餐點明細與進度卡片
+        function escapeHtml(value) {
+            return String(value ?? '').replace(/[&<>"']/g, char => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+            })[char]);
+        }
+
         function renderMeals() {
             const listEl = document.getElementById('todayMealList');
             listEl.innerHTML = '';
@@ -783,14 +800,12 @@
                 card.innerHTML = `
                     <div class="flex justify-between items-start">
                         <div>
-                            <span class="text-xs font-bold px-2 py-0.5 rounded bg-blue-950 text-blue-400 mr-2">${meal.type}</span>
-                            <span class="font-bold text-white text-sm sm:text-base">${meal.name}</span>
+                            <span class="text-xs font-bold px-2 py-0.5 rounded bg-blue-950 text-blue-400 mr-2">${escapeHtml(meal.type)}</span>
+                            <span class="font-bold text-white text-sm sm:text-base">${escapeHtml(meal.name)}</span>
                         </div>
                         <div class="flex items-center space-x-3">
                             <span class="text-xs font-extrabold text-cyan-400 bg-slate-800 px-2.5 py-1 rounded-lg">約 ${meal.calories} kcal</span>
-                            <button onclick="deleteMeal(${index})" class="text-slate-500 hover:text-rose-400 text-xs transition-colors">
-                                <i class="fa-solid fa-trash-can"></i>
-                            </button>
+                            <span class="text-[10px] text-slate-500">共享紀錄</span>
                         </div>
                     </div>
                     <div class="text-xs text-slate-400 flex flex-wrap gap-4 pt-1 border-t border-slate-800/60">
@@ -798,7 +813,8 @@
                         <span>🌾 碳水: <strong class="text-amber-400">${meal.carbs}g</strong></span>
                         <span>🥑 脂肪: <strong class="text-purple-400">${meal.fat}g</strong></span>
                     </div>
-                    ${meal.tip ? `<p class="text-[11px] text-cyan-300/90 bg-cyan-950/40 p-2 rounded-xl border border-cyan-900/30">💡 AI 觀點：${meal.tip}</p>` : ''}
+                    ${meal.tip ? `<p class="text-[11px] text-cyan-300/90 bg-cyan-950/40 p-2 rounded-xl border border-cyan-900/30">💡 AI 觀點：${escapeHtml(meal.tip)}</p>` : ''}
+                    ${meal.analysis ? `<p class="text-[11px] text-slate-300 bg-violet-950/30 p-2 rounded-xl border border-violet-900/30"><span class="font-bold text-violet-300">📷 照片／營養說明：</span>${escapeHtml(meal.analysis)}</p>` : ''}
                 `;
                 listEl.appendChild(card);
             });
@@ -834,7 +850,6 @@
             const calDiff = currentUser.targetCalories - totalCal;
             document.getElementById('calDiffText').innerText = calDiff >= 0 ? `剩餘 ${calDiff} kcal` : `⚠️ 超標 ${Math.abs(calDiff)} kcal`;
 
-            saveMealsForSelectedDate();
             renderCharts();
         }
 
@@ -918,8 +933,7 @@
         }
 
         function deleteMeal(idx) {
-            userMeals.splice(idx, 1);
-            renderMeals();
+            alert('為保護共享紀錄，公開模式暫不開放刪除餐點。');
         }
 
         // 文字記帳
@@ -946,16 +960,16 @@
                 const result = await res.json();
                 if (result.success) {
                     const data = result.data;
-                    userMeals.push({
-                        id: Date.now(),
-                        createdAt: new Date().toISOString(),
+                    await saveSharedMeal({
                         type: mealType,
                         name: data.mealName || mealInput,
                         calories: data.calories || 300,
                         protein: data.protein || 15,
                         carbs: data.carbs || 35,
                         fat: data.fat || 10,
-                        tip: data.tip || ''
+                        tip: data.tip || '',
+                        analysis: data.analysis || '',
+                        source: 'text'
                     });
 
                     renderMeals();
