@@ -26,6 +26,158 @@
                 }
             }
         }
+        // Reliable cloud sync, device fallback, and administrator controls.
+        async function saveSharedMeal(meal) {
+            const payload = { ...meal, profileId: currentUserId, recordDate: selectedDate, syncKey: createSyncKey('meal') };
+            try {
+                const saved = await postSharedRecord('/api/shared-meals', payload);
+                allMeals.unshift(saved);
+            } catch (error) {
+                if (!error.canRetry) throw error;
+                queuePendingUpload('/api/shared-meals', payload);
+                allMeals.unshift({ ...payload, id: `pending-${payload.syncKey}`, createdAt: new Date().toISOString(), pending: true });
+                alert('目前無法連上雲端，這筆飲食已安全暫存在此裝置，恢復網路後會自動同步。');
+            }
+            userMeals = getMealsForDate();
+            saveDeviceBackup();
+        }
+
+        async function addWater(volumeMl) {
+            if (!currentUser) return alert('請先新增使用者。');
+            const amount = Math.round(Number(volumeMl));
+            if (!Number.isInteger(amount) || amount < 1 || amount > 5000) return alert('請輸入 1–5,000 ml 的喝水量。');
+            const payload = { profileId: currentUserId, recordDate: selectedDate, volumeMl: amount, syncKey: createSyncKey('water') };
+            try {
+                const saved = await postSharedRecord('/api/shared-water', payload);
+                allWater.unshift(saved);
+            } catch (error) {
+                if (!error.canRetry) return alert(`喝水紀錄儲存失敗：${error.message}`);
+                queuePendingUpload('/api/shared-water', payload);
+                allWater.unshift({ ...payload, id: `pending-${payload.syncKey}`, createdAt: new Date().toISOString(), pending: true });
+                alert('目前無法連上雲端，喝水紀錄已安全暫存在此裝置，恢復網路後會自動同步。');
+            }
+            document.getElementById('waterAmountInput').value = '';
+            renderWater();
+            saveDeviceBackup();
+        }
+
+        function renderUserDropdown() {
+            const selectEl = document.getElementById('userSelect');
+            selectEl.innerHTML = '';
+            selectEl.disabled = users.length === 0;
+            if (!users.length) {
+                const option = document.createElement('option');
+                option.value = '';
+                option.innerText = '尚無使用者';
+                selectEl.appendChild(option);
+                return;
+            }
+            users.forEach(u => {
+                const option = document.createElement('option');
+                option.value = u.id;
+                option.innerText = u.name;
+                option.selected = u.id === currentUserId;
+                selectEl.appendChild(option);
+            });
+        }
+
+        function changeUser() {
+            if (!users.length) return;
+            currentUserId = document.getElementById('userSelect').value;
+            currentUser = users.find(user => user.id === currentUserId);
+            localStorage.setItem('health_current_user_id', currentUserId);
+            userMeals = getMealsForDate();
+            loadUserData();
+        }
+
+        function loadUserData() {
+            if (!currentUser) {
+                document.getElementById('userDisplayName').innerText = '尚無使用者';
+                document.getElementById('userAvatar').innerText = '?';
+                document.getElementById('userGoalBadge').innerText = '請新增使用者以開始記錄';
+                document.getElementById('userInfoSub').innerText = '目前沒有公開使用者或飲食紀錄。';
+                document.getElementById('headerBmr').innerText = 'BMR: —';
+                ['targetCal', 'targetP', 'targetC', 'targetF'].forEach(id => document.getElementById(id).innerText = '—');
+                document.getElementById('todayMealList').innerHTML = '<div class="text-center py-8 text-slate-400 text-sm">目前沒有使用者。請點擊「新增使用者」建立第一份公開紀錄。</div>';
+                ['waterBasicGoal', 'waterFatlossGoal', 'waterDetoxGoal', 'waterCurrent', 'waterTarget'].forEach(id => document.getElementById(id).innerText = '—');
+                document.getElementById('waterDateLabel').innerText = '請先新增使用者';
+                document.getElementById('waterProgressText').innerText = '尚未設定喝水目標';
+                document.getElementById('waterLogList').innerHTML = '';
+                return;
+            }
+            document.getElementById('userDisplayName').innerText = currentUser.name;
+            document.getElementById('userAvatar').innerText = currentUser.name.charAt(0);
+            document.getElementById('userGoalBadge').innerText = `${currentUser.goal} | 目標體重 ${currentUser.targetWeight} kg`;
+            document.getElementById('userInfoSub').innerText = `每日建議熱量：${currentUser.targetCalories} kcal | BMR：${currentUser.bmr} kcal`;
+            document.getElementById('headerBmr').innerText = `BMR: ${currentUser.bmr} kcal`;
+            document.getElementById('targetCal').innerText = currentUser.targetCalories;
+            document.getElementById('targetP').innerText = currentUser.targetP;
+            document.getElementById('targetC').innerText = currentUser.targetC;
+            document.getElementById('targetF').innerText = currentUser.targetF;
+            document.getElementById('recordDate').value = selectedDate;
+            updateRecordHeading();
+            renderMeals();
+            renderWater();
+        }
+
+        function setAdminUi() {
+            document.getElementById('adminLoginPanel').classList.toggle('hidden', Boolean(adminToken));
+            document.getElementById('adminControlsPanel').classList.toggle('hidden', !adminToken);
+        }
+
+        function openAdminModal() {
+            document.getElementById('adminModal').classList.remove('hidden');
+            setAdminUi();
+        }
+
+        function closeAdminModal() { document.getElementById('adminModal').classList.add('hidden'); }
+
+        async function adminLogin() {
+            const password = document.getElementById('adminPasswordInput').value;
+            if (!password) return alert('請輸入管理員密碼。');
+            const response = await fetch('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password }) });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result.success) return alert(result.error || '管理員登入失敗。');
+            adminToken = result.data.token;
+            sessionStorage.setItem('nutrition_admin_token', adminToken);
+            document.getElementById('adminPasswordInput').value = '';
+            setAdminUi();
+        }
+
+        function adminLogout() {
+            adminToken = '';
+            sessionStorage.removeItem('nutrition_admin_token');
+            setAdminUi();
+        }
+
+        async function adminFetch(url, options = {}) {
+            const response = await fetch(url, { ...options, headers: { ...(options.headers || {}), Authorization: `Bearer ${adminToken}` } });
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result.success) throw new Error(result.error || '管理員操作失敗。');
+            return result.data;
+        }
+
+        async function downloadImmutableBackup() {
+            try {
+                const events = await adminFetch('/api/admin/backup-events');
+                downloadJson({ format: 'nutrition-consultant-immutable-backup-v1', exportedAt: new Date().toISOString(), events }, `nutrition-immutable-backup-${getTodayKey()}.json`);
+                alert(`已下載 ${events.length} 筆不可變備份事件。`);
+            } catch (error) { alert(`備份下載失敗：${error.message}`); throw error; }
+        }
+
+        async function deleteAllPublicRecords() {
+            if (!confirm('此操作會清空公開網站上的全部使用者、飲食與喝水紀錄。系統會先下載不可變備份。要繼續嗎？')) return;
+            if (prompt('請輸入 DELETE ALL 確認清空：') !== 'DELETE ALL') return alert('未清空資料。');
+            try {
+                await downloadImmutableBackup();
+                const result = await adminFetch('/api/admin/all-records', { method: 'DELETE' });
+                await loadSharedData();
+                closeAdminModal();
+                alert(`已清空 ${result.deletedProfiles || 0} 位使用者及其公開紀錄。備份已保留並已下載。`);
+            } catch (error) { alert(`清空失敗：${error.message}`); }
+        }
+
+        window.addEventListener('online', async () => { if (await flushPendingUploads()) loadSharedData(); });
     </script>
 
     <style>
@@ -98,6 +250,10 @@
                             <i class="fa-solid fa-file-export text-[10px]"></i>
                             <span>匯出本機舊紀錄</span>
                         </button>
+                        <button onclick="downloadCloudBackup()" class="text-xs bg-sky-950 hover:bg-sky-900 text-sky-300 border border-sky-800/80 px-2 py-0.5 rounded-lg transition-colors flex items-center space-x-1">
+                            <i class="fa-solid fa-cloud-arrow-down text-[10px]"></i>
+                            <span>下載雲端備份</span>
+                        </button>
                         <input id="legacyImportInput" type="file" accept="application/json" class="hidden" onchange="importLegacyFile(this)">
                     </div>
                 </div>
@@ -113,6 +269,9 @@
                     <input type="password" id="userApiKey" placeholder="API Key (選擇性)"
                         class="px-3 py-1.5 bg-slate-900 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-cyan-500 w-36 sm:w-44">
                 </div>
+                <button type="button" onclick="openAdminModal()" class="text-xs bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 px-3 py-1.5 rounded-xl transition-colors flex items-center space-x-1">
+                    <i class="fa-solid fa-shield-halved"></i><span>管理員</span>
+                </button>
             </div>
         </div>
     </header>
@@ -482,6 +641,26 @@
         </div>
     </div>
 
+    <div id="adminModal" class="hidden fixed inset-0 z-[60] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4">
+        <div class="glass-panel p-6 sm:p-8 rounded-3xl max-w-md w-full border border-slate-700 shadow-2xl space-y-5">
+            <div class="flex justify-between items-center border-b border-slate-800 pb-4">
+                <h3 class="text-lg font-bold text-white"><i class="fa-solid fa-shield-halved text-rose-400 mr-2"></i>管理員控制台</h3>
+                <button onclick="closeAdminModal()" class="text-slate-400 hover:text-white"><i class="fa-solid fa-xmark text-lg"></i></button>
+            </div>
+            <div id="adminLoginPanel" class="space-y-4">
+                <p class="text-xs text-slate-400">登入後才能下載不可變備份或清空公開使用者與紀錄。</p>
+                <input id="adminPasswordInput" type="password" autocomplete="current-password" placeholder="管理員密碼" class="w-full px-3.5 py-3 bg-slate-900 border border-slate-700 rounded-xl text-white text-sm focus:ring-2 focus:ring-rose-500 outline-none">
+                <button type="button" onclick="adminLogin()" class="w-full py-3 bg-slate-100 hover:bg-white text-slate-950 font-bold text-sm rounded-xl">登入管理員</button>
+            </div>
+            <div id="adminControlsPanel" class="hidden space-y-4">
+                <div class="rounded-xl border border-emerald-800 bg-emerald-950/40 px-3 py-2 text-xs text-emerald-200">管理員登入有效期間為 12 小時。</div>
+                <button type="button" onclick="downloadImmutableBackup()" class="w-full py-3 bg-sky-950 hover:bg-sky-900 border border-sky-800 text-sky-200 font-bold text-sm rounded-xl">下載不可變備份</button>
+                <button type="button" onclick="deleteAllPublicRecords()" class="w-full py-3 bg-rose-600 hover:bg-rose-500 text-white font-bold text-sm rounded-xl">清空全部使用者與公開紀錄</button>
+                <button type="button" onclick="adminLogout()" class="w-full py-2 text-xs text-slate-400 hover:text-white">登出管理員</button>
+            </div>
+        </div>
+    </div>
+
     <!-- JavaScript Logic -->
     <script>
         // 預設的使用者清單 (LocalStorage 支援多使用者)
@@ -534,6 +713,10 @@
         let userMeals = [];
         let chartRange = 7;
         let waterGoalMode = localStorage.getItem('health_water_goal_mode') || 'basic';
+        let adminToken = sessionStorage.getItem('nutrition_admin_token') || '';
+        let isFlushingUploads = false;
+        const DEVICE_BACKUP_KEY = 'nutrition_device_backup_v2';
+        const PENDING_UPLOADS_KEY = 'nutrition_pending_uploads_v1';
 
         let selectedBase64Image = null;
         let selectedImageMimeType = 'image/jpeg';
@@ -572,6 +755,87 @@
             return allWater.filter(record => record.profileId === currentUserId && record.recordDate === selectedDate);
         }
 
+        function createSyncKey(prefix) {
+            return `${prefix}_${crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2)}`}`;
+        }
+
+        function readPendingUploads() {
+            try { return JSON.parse(localStorage.getItem(PENDING_UPLOADS_KEY) || '[]'); } catch { return []; }
+        }
+
+        function getBackupSnapshot() {
+            return {
+                format: 'nutrition-consultant-device-backup-v2',
+                exportedAt: new Date().toISOString(),
+                profiles: users,
+                meals: allMeals,
+                water: allWater,
+                pendingUploads: readPendingUploads()
+            };
+        }
+
+        function saveDeviceBackup() {
+            try { localStorage.setItem(DEVICE_BACKUP_KEY, JSON.stringify(getBackupSnapshot())); } catch (error) { console.warn('Unable to save device backup', error); }
+        }
+
+        function downloadJson(payload, fileName) {
+            const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }));
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = fileName;
+            link.click();
+            setTimeout(() => URL.revokeObjectURL(url), 500);
+        }
+
+        function downloadCloudBackup() {
+            saveDeviceBackup();
+            downloadJson(getBackupSnapshot(), `nutrition-cloud-backup-${getTodayKey()}.json`);
+            alert('已下載目前的雲端紀錄與本機待同步紀錄。建議每週保留一份。');
+        }
+
+        function queuePendingUpload(path, payload) {
+            const pending = readPendingUploads();
+            if (!pending.some(item => item.payload?.syncKey === payload.syncKey)) {
+                pending.push({ path, payload, queuedAt: new Date().toISOString() });
+                localStorage.setItem(PENDING_UPLOADS_KEY, JSON.stringify(pending));
+            }
+        }
+
+        async function postSharedRecord(path, payload) {
+            let response;
+            try {
+                response = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+            } catch (error) {
+                error.canRetry = true;
+                throw error;
+            }
+            const result = await response.json().catch(() => ({}));
+            if (!response.ok || !result.success) {
+                const error = new Error(result.error || '無法儲存紀錄。');
+                error.canRetry = response.status >= 500 || response.status === 429;
+                throw error;
+            }
+            return result.data;
+        }
+
+        async function flushPendingUploads() {
+            if (isFlushingUploads || !navigator.onLine) return false;
+            const pending = readPendingUploads();
+            if (!pending.length) return false;
+            isFlushingUploads = true;
+            const remaining = [];
+            let uploaded = 0;
+            for (const item of pending) {
+                try { await postSharedRecord(item.path, item.payload); uploaded += 1; }
+                catch (error) { remaining.push(item); }
+            }
+            if (remaining.length) localStorage.setItem(PENDING_UPLOADS_KEY, JSON.stringify(remaining));
+            else localStorage.removeItem(PENDING_UPLOADS_KEY);
+            isFlushingUploads = false;
+            saveDeviceBackup();
+            return uploaded > 0;
+        }
+
         async function loadSharedData() {
             try {
                 const response = await fetch('/api/shared-records');
@@ -580,6 +844,16 @@
                 users = result.data.profiles;
                 allMeals = result.data.meals;
                 allWater = result.data.water || [];
+                if (!users.length) {
+                    currentUserId = null;
+                    currentUser = null;
+                    userMeals = [];
+                    localStorage.removeItem('health_current_user_id');
+                    renderUserDropdown();
+                    loadUserData();
+                    saveDeviceBackup();
+                    return;
+                }
                 currentUserId = users.some(user => user.id === currentUserId) ? currentUserId : users[0]?.id;
                 currentUser = users.find(user => user.id === currentUserId);
                 if (!currentUser) throw new Error('找不到可使用的健康檔案。');
@@ -587,6 +861,8 @@
                 userMeals = getMealsForDate();
                 renderUserDropdown();
                 loadUserData();
+                saveDeviceBackup();
+                flushPendingUploads().then(uploaded => { if (uploaded) loadSharedData(); });
             } catch (error) {
                 console.error(error);
                 alert(`共享飲食紀錄目前無法載入：${error.message}`);
