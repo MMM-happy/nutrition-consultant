@@ -94,6 +94,10 @@
                             <i class="fa-solid fa-file-import text-[10px]"></i>
                             <span>匯入舊紀錄</span>
                         </button>
+                        <button id="localExportButton" onclick="exportLegacyRecords()" class="hidden text-xs bg-amber-950 hover:bg-amber-900 text-amber-300 border border-amber-800/80 px-2 py-0.5 rounded-lg transition-colors flex items-center space-x-1">
+                            <i class="fa-solid fa-file-export text-[10px]"></i>
+                            <span>匯出本機舊紀錄</span>
+                        </button>
                         <input id="legacyImportInput" type="file" accept="application/json" class="hidden" onchange="importLegacyFile(this)">
                     </div>
                 </div>
@@ -491,6 +495,12 @@
 
         window.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('recordDate').value = selectedDate;
+            if (location.protocol === 'file:') {
+                document.getElementById('localExportButton').classList.remove('hidden');
+                document.getElementById('recordHeading').innerText = '請先匯出這個檔案原本儲存的飲食紀錄';
+                document.getElementById('todayMealList').innerHTML = '<div class="text-center py-8 text-amber-200 text-sm">這是本機舊資料匯出模式。請按上方「匯出本機舊紀錄」，再到公開網站上傳 JSON 檔。</div>';
+                return;
+            }
             await loadSharedData();
         });
 
@@ -551,6 +561,43 @@
                 console.error(error);
                 alert(`舊紀錄匯入失敗：${error.message}`);
             }
+        }
+
+        function exportLegacyRecords() {
+            const readLocalJson = (key, fallback) => {
+                try { return JSON.parse(localStorage.getItem(key) || '') || fallback; } catch { return fallback; }
+            };
+            const storedUsers = readLocalJson('health_users', []);
+            const profileMap = new Map([...DEFAULT_USERS, ...storedUsers].map(profile => [profile.id, profile]));
+            const profileIds = new Set(profileMap.keys());
+            Object.keys(localStorage).forEach(key => {
+                if (key.startsWith('health_daily_meals_')) profileIds.add(key.replace('health_daily_meals_', ''));
+                if (key.startsWith('health_meals_')) profileIds.add(key.replace('health_meals_', ''));
+            });
+
+            const meals = [];
+            const profiles = [];
+            profileIds.forEach(profileId => {
+                const profile = profileMap.get(profileId);
+                if (!profile) return;
+                profiles.push(profile);
+                const dailyLogs = readLocalJson(`health_daily_meals_${profileId}`, {});
+                Object.entries(dailyLogs).forEach(([recordDate, records]) => {
+                    if (Array.isArray(records)) records.forEach(meal => meals.push({ ...meal, profileId, recordDate }));
+                });
+                const oldList = readLocalJson(`health_meals_${profileId}`, []);
+                if (Array.isArray(oldList)) oldList.forEach(meal => meals.push({ ...meal, profileId, recordDate: meal.recordDate || getTodayKey() }));
+            });
+
+            const payload = { format: 'nutrition-consultant-legacy-v1', exportedAt: new Date().toISOString(), profiles, meals };
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `nutrition-legacy-records-${getTodayKey()}.json`;
+            link.click();
+            URL.revokeObjectURL(url);
+            alert(`已匯出 ${profiles.length} 位使用者與 ${meals.length} 筆餐點。請前往公開網站按「匯入舊紀錄」上傳此檔案。`);
         }
 
         async function saveSharedMeal(meal) {
