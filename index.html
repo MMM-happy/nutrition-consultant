@@ -284,6 +284,10 @@
                             <i class="fa-solid fa-file-import text-[10px]"></i>
                             <span class="sm:hidden">匯入</span><span class="hidden sm:inline">匯入舊紀錄</span>
                         </button>
+                        <button onclick="openPhotoGallery()" class="shrink-0 text-xs bg-cyan-950 hover:bg-cyan-900 text-cyan-200 border border-cyan-800/80 px-2.5 py-1.5 rounded-lg transition-colors flex items-center space-x-1">
+                            <i class="fa-solid fa-images text-[10px]"></i>
+                            <span>公開相簿</span>
+                        </button>
                         <button id="localExportButton" onclick="exportLegacyRecords()" class="hidden text-xs bg-amber-950 hover:bg-amber-900 text-amber-300 border border-amber-800/80 px-2 py-1.5 rounded-lg transition-colors flex items-center space-x-1">
                             <i class="fa-solid fa-file-export text-[10px]"></i>
                             <span>匯出本機舊紀錄</span>
@@ -699,6 +703,19 @@
         </div>
     </div>
 
+    <div id="photoGalleryModal" class="hidden fixed inset-0 z-[60] bg-slate-950/90 backdrop-blur-md p-3 sm:p-6 overflow-y-auto">
+        <div class="mx-auto max-w-5xl glass-panel rounded-3xl border border-cyan-900/70 p-4 sm:p-6">
+            <div class="mb-5 flex items-center justify-between gap-3 border-b border-slate-800 pb-4">
+                <div>
+                    <h3 class="text-lg font-extrabold text-white"><i class="fa-solid fa-images mr-2 text-cyan-300"></i>公開餐點相簿</h3>
+                    <p class="mt-1 text-xs text-slate-400">所有已成功備份的餐點照片，依日期與餐別瀏覽。</p>
+                </div>
+                <button onclick="closePhotoGallery()" aria-label="關閉公開相簿" class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-700 text-slate-300 hover:bg-slate-800 hover:text-white"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <div id="photoGalleryList" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"></div>
+        </div>
+    </div>
+
     <!-- JavaScript Logic -->
     <script>
         // 預設的使用者清單 (LocalStorage 支援多使用者)
@@ -829,6 +846,28 @@
             saveDeviceBackup();
             downloadJson(getBackupSnapshot(), `nutrition-cloud-backup-${getTodayKey()}.json`);
             alert('已下載目前的雲端紀錄與本機待同步紀錄。建議每週保留一份。');
+        }
+
+        function openPhotoGallery() {
+            const gallery = document.getElementById('photoGalleryList');
+            const userNames = new Map(users.map(user => [user.id, user.name]));
+            const photos = allMeals.filter(meal => meal.photoUrl).sort((a, b) =>
+                `${b.recordDate}${b.createdAt || ''}`.localeCompare(`${a.recordDate}${a.createdAt || ''}`)
+            );
+            gallery.innerHTML = photos.length ? photos.map(meal => `
+                <article class="overflow-hidden rounded-2xl border border-slate-700 bg-slate-900/80 shadow-lg shadow-cyan-950/20">
+                    <img src="${escapeHtml(meal.photoUrl)}" alt="${escapeHtml(meal.recordDate)} ${escapeHtml(meal.type)} ${escapeHtml(meal.name)}" loading="lazy" class="h-52 w-full object-cover">
+                    <div class="space-y-1.5 p-3">
+                        <div class="flex items-center justify-between gap-2 text-xs text-cyan-200"><span>📅 ${escapeHtml(formatRecordDate(meal.recordDate))}</span><span>🍽️ ${escapeHtml(meal.type)}</span></div>
+                        <p class="truncate text-sm font-bold text-white">${escapeHtml(meal.name)}</p>
+                        <p class="text-xs text-slate-400">上傳者：${escapeHtml(userNames.get(meal.profileId) || '公開使用者')} ・ 約 ${Number(meal.calories) || 0} kcal</p>
+                    </div>
+                </article>`).join('') : '<div class="col-span-full rounded-2xl border border-dashed border-slate-700 px-4 py-12 text-center text-sm text-slate-400">目前還沒有已成功備份的餐點照片。</div>';
+            document.getElementById('photoGalleryModal').classList.remove('hidden');
+        }
+
+        function closePhotoGallery() {
+            document.getElementById('photoGalleryModal').classList.add('hidden');
         }
 
         function queuePendingUpload(path, payload) {
@@ -1297,7 +1336,8 @@
                     alert('照片分析失敗：' + (result.error || '請稍後再試。'));
                 }
             } catch (err) {
-                alert('目前無法連上伺服器。免費主機剛啟動時可能需要約 50 秒，請稍候後再試。');
+                console.error('Photo analysis or backup failed:', err);
+                alert(`照片分析或公開備份失敗：${err.message || '請確認網路後再試。'}`);
             } finally {
                 btn.disabled = false;
                 btnText.innerText = '🤖 AI 視覺辨識照片並計算熱量';
