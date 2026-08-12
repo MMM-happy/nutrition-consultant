@@ -3,6 +3,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // 載入 .env 環境變數
@@ -31,6 +32,8 @@ const DEFAULT_PROFILES = [
 // 不使用或儲存 service role 私密金鑰，避免把高權限憑證交給網站部署環境。
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://mwbyhmhkqwrkhfoyqtmo.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_aQauBQxp_Ts1PIuGoqfPQw_d1ApPlmX';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+const adminSessions = new Map();
 
 function requireSupabaseConfig() {
     if (!SUPABASE_URL || !SUPABASE_PUBLISHABLE_KEY) {
@@ -64,6 +67,22 @@ function limitPublicWrites(req, res, next) {
     }
     history.push(now);
     publicWriteWindow.set(key, history);
+    next();
+}
+
+function secureCompare(left, right) {
+    const leftBuffer = Buffer.from(left || '');
+    const rightBuffer = Buffer.from(right || '');
+    return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function requireAdmin(req, res, next) {
+    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    const expiresAt = adminSessions.get(token);
+    if (!expiresAt || expiresAt < Date.now()) {
+        adminSessions.delete(token);
+        return res.status(401).json({ success: false, error: '管理員登入已失效，請重新登入。' });
+    }
     next();
 }
 
@@ -103,13 +122,7 @@ function waterToClient(record) {
 }
 
 async function getSharedRecords() {
-    let profiles = await supabaseRequest('nutrition_profiles?select=*&order=created_at.asc');
-    if (!profiles.length) {
-        profiles = await supabaseRequest('nutrition_profiles?on_conflict=id', {
-            method: 'POST', headers: { Prefer: 'resolution=ignore-duplicates,return=representation' },
-            body: JSON.stringify(DEFAULT_PROFILES.map(profileToDb))
-        });
-    }
+    const profiles = await supabaseRequest('nutrition_profiles?select=*&order=created_at.asc');
     const [meals, water] = await Promise.all([
         supabaseRequest('nutrition_meals?select=*&order=record_date.desc,created_at.desc'),
         supabaseRequest('nutrition_water_logs?select=*&order=record_date.desc,created_at.desc')
@@ -155,15 +168,18 @@ app.post('/api/shared-meals', limitPublicWrites, async (req, res) => {
             carbs: Number(input.carbs) || 0, fat: Number(input.fat) || 0,
             tip: String(input.tip || '').trim().slice(0, 1000),
             analysis: String(input.analysis || '').trim().slice(0, 2000),
-            source: ['photo', 'text', 'manual'].includes(input.source) ? input.source : 'manual'
+            source: ['photo', 'text', 'manual'].includes(input.source) ? input.source : 'manual',
+            sync_key: String(input.syncKey || '').trim().slice(0, 120)
         };
         if (!meal.profile_id || !/^\d{4}-\d{2}-\d{2}$/.test(meal.record_date) || !meal.meal_type || !meal.name || !Number.isFinite(meal.calories) || meal.calories < 0) {
             return res.status(400).json({ success: false, error: '餐點資料格式不正確。' });
         }
-        const created = await supabaseRequest('nutrition_meals', {
-            method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(meal)
+        if (!meal.sync_key) return res.status(400).json({ success: false, error: 'Missing sync key.' });
+        const created = await supabaseRequest('nutrition_meals?on_conflict=sync_key', {
+            method: 'POST', headers: { Prefer: 'resolution=ignore-duplicates,return=representation' }, body: JSON.stringify(meal)
         });
-        res.status(201).json({ success: true, data: mealToClient(created[0]) });
+        const stored = created[0] || (await supabaseRequest(`nutrition_meals?sync_key=eq.${encodeURIComponent(meal.sync_key)}&limit=1`))[0];
+        res.status(201).json({ success: true, data: mealToClient(stored) });
     } catch (error) {
         console.error('Shared meal create error:', error);
         res.status(500).json({ success: false, error: error.message });
@@ -175,18 +191,54 @@ app.post('/api/shared-water', limitPublicWrites, async (req, res) => {
         const input = req.body || {};
         const water = {
             profile_id: String(input.profileId || ''), record_date: String(input.recordDate || ''),
-            volume_ml: Math.round(Number(input.volumeMl))
+            volume_ml: Math.round(Number(input.volumeMl)), sync_key: String(input.syncKey || '').trim().slice(0, 120)
         };
         if (!water.profile_id || !/^\d{4}-\d{2}-\d{2}$/.test(water.record_date) || !Number.isInteger(water.volume_ml) || water.volume_ml < 1 || water.volume_ml > 5000) {
             return res.status(400).json({ success: false, error: '喝水紀錄格式不正確，每次請輸入 1–5,000 ml。' });
         }
-        const created = await supabaseRequest('nutrition_water_logs', {
-            method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(water)
+        if (!water.sync_key) return res.status(400).json({ success: false, error: 'Missing sync key.' });
+        const created = await supabaseRequest('nutrition_water_logs?on_conflict=sync_key', {
+            method: 'POST', headers: { Prefer: 'resolution=ignore-duplicates,return=representation' }, body: JSON.stringify(water)
         });
-        res.status(201).json({ success: true, data: waterToClient(created[0]) });
+        const stored = created[0] || (await supabaseRequest(`nutrition_water_logs?sync_key=eq.${encodeURIComponent(water.sync_key)}&limit=1`))[0];
+        res.status(201).json({ success: true, data: waterToClient(stored) });
     } catch (error) {
         console.error('Shared water create error:', error);
         res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/admin/login', limitPublicWrites, (req, res) => {
+    if (!ADMIN_PASSWORD) return res.status(503).json({ success: false, error: '管理員登入尚未完成設定。' });
+    if (!secureCompare(String(req.body?.password || ''), ADMIN_PASSWORD)) {
+        return res.status(401).json({ success: false, error: '管理員密碼不正確。' });
+    }
+    const token = crypto.randomBytes(32).toString('base64url');
+    adminSessions.set(token, Date.now() + 12 * 60 * 60 * 1000);
+    res.json({ success: true, data: { token, expiresInHours: 12 } });
+});
+
+app.delete('/api/admin/all-records', requireAdmin, async (req, res) => {
+    try {
+        const result = await supabaseRequest('rpc/admin_delete_all_public_records', {
+            method: 'POST', body: JSON.stringify({ p_admin_password: ADMIN_PASSWORD })
+        });
+        res.json({ success: true, data: result });
+    } catch (error) {
+        console.error('Admin delete all error:', error);
+        res.status(500).json({ success: false, error: '清空資料失敗，備份沒有被刪除。' });
+    }
+});
+
+app.get('/api/admin/backup-events', requireAdmin, async (req, res) => {
+    try {
+        const data = await supabaseRequest('rpc/admin_export_backup_events', {
+            method: 'POST', body: JSON.stringify({ p_admin_password: ADMIN_PASSWORD })
+        });
+        res.json({ success: true, data });
+    } catch (error) {
+        console.error('Admin backup export error:', error);
+        res.status(500).json({ success: false, error: '無法下載備份。' });
     }
 });
 
