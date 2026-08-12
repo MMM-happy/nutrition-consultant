@@ -8,8 +8,6 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 // 載入 .env 環境變數
 if (fs.existsSync(path.join(__dirname, '.env'))) {
     dotenv.config({ path: path.join(__dirname, '.env') });
-} else if (fs.existsSync(path.join(__dirname, '.env.example'))) {
-    dotenv.config({ path: path.join(__dirname, '.env.example') });
 } else {
     dotenv.config();
 }
