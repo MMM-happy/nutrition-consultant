@@ -95,6 +95,13 @@ function mealToClient(meal) {
     };
 }
 
+function waterToClient(record) {
+    return {
+        id: record.id, profileId: record.profile_id, recordDate: record.record_date,
+        volumeMl: Number(record.volume_ml), createdAt: record.created_at
+    };
+}
+
 async function getSharedRecords() {
     let profiles = await supabaseRequest('nutrition_profiles?select=*&order=created_at.asc');
     if (!profiles.length) {
@@ -103,8 +110,14 @@ async function getSharedRecords() {
             body: JSON.stringify(DEFAULT_PROFILES.map(profileToDb))
         });
     }
-    const meals = await supabaseRequest('nutrition_meals?select=*&order=record_date.desc,created_at.desc');
-    return { profiles: profiles.map(profileToClient), meals: meals.map(mealToClient) };
+    const [meals, water] = await Promise.all([
+        supabaseRequest('nutrition_meals?select=*&order=record_date.desc,created_at.desc'),
+        supabaseRequest('nutrition_water_logs?select=*&order=record_date.desc,created_at.desc')
+    ]);
+    return {
+        profiles: profiles.map(profileToClient), meals: meals.map(mealToClient),
+        water: water.map(waterToClient)
+    };
 }
 
 app.get('/api/shared-records', async (req, res) => {
@@ -153,6 +166,26 @@ app.post('/api/shared-meals', limitPublicWrites, async (req, res) => {
         res.status(201).json({ success: true, data: mealToClient(created[0]) });
     } catch (error) {
         console.error('Shared meal create error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/shared-water', limitPublicWrites, async (req, res) => {
+    try {
+        const input = req.body || {};
+        const water = {
+            profile_id: String(input.profileId || ''), record_date: String(input.recordDate || ''),
+            volume_ml: Math.round(Number(input.volumeMl))
+        };
+        if (!water.profile_id || !/^\d{4}-\d{2}-\d{2}$/.test(water.record_date) || !Number.isInteger(water.volume_ml) || water.volume_ml < 1 || water.volume_ml > 5000) {
+            return res.status(400).json({ success: false, error: '喝水紀錄格式不正確，每次請輸入 1–5,000 ml。' });
+        }
+        const created = await supabaseRequest('nutrition_water_logs', {
+            method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(water)
+        });
+        res.status(201).json({ success: true, data: waterToClient(created[0]) });
+    } catch (error) {
+        console.error('Shared water create error:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
