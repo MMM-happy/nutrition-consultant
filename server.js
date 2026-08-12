@@ -486,7 +486,7 @@ app.post('/api/parse-meal', limitPublicWrites, async (req, res) => {
 // ---------------------------------------------------------
 app.post('/api/parse-food-image', limitPublicWrites, async (req, res) => {
     try {
-        const { imageBase64, mimeType = 'image/jpeg', mealType = '午餐', apiKey } = req.body;
+        const { imageBase64, mimeType = 'image/jpeg', mealType = '午餐', photoDescription = '', apiKey } = req.body;
 
         if (!imageBase64) {
             return res.status(400).json({ success: false, error: '請上傳或拍攝一張食物照片！' });
@@ -494,6 +494,7 @@ app.post('/api/parse-food-image', limitPublicWrites, async (req, res) => {
 
         const cleanBase64 = validatePhotoPayload(imageBase64, mimeType);
 
+        const userDescription = String(photoDescription || '').trim().slice(0, 500);
         const prompt = `
 你是一位具備視覺影像辨識能力的頂尖專業營養師與美食熱量專家。
 請仔細觀察這張照片中的食物：
@@ -501,6 +502,9 @@ app.post('/api/parse-food-image', limitPublicWrites, async (req, res) => {
 2. 估算出此餐點的總熱量(kcal)與三大營養素：蛋白質(g)、碳水化合物(g)、脂肪(g)。
 3. 用繁體中文說明辨識依據、可能的份量與熱量估算限制。
 4. 給予一句親切且具體的營養建議。照片辨識與份量估算可能有誤差，不可當作醫療或治療建議。
+
+使用者對此餐點的補充說明：${userDescription || '未提供'}
+請將補充說明視為估算參考；若與照片不一致，以照片可見內容為主，並在 analysis 中誠實說明不確定處。
 
 請【只輸出以下 JSON 格式】（不要包含任何額外說明文字）：
 {
