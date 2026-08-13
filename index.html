@@ -1097,8 +1097,41 @@
             });
             const logList = document.getElementById('waterLogList');
             logList.innerHTML = records.length
-                ? records.map(record => `<span class="rounded-lg border border-sky-900/70 bg-sky-950/40 px-2.5 py-1 text-xs text-sky-200">💧 ${record.volumeMl.toLocaleString()} ml</span>`).join('')
+                ? records.map(record => `<span class="inline-flex items-center gap-1 rounded-lg border border-sky-900/70 bg-sky-950/40 px-2.5 py-1 text-xs text-sky-200"><span>💧 ${record.volumeMl.toLocaleString()} ml</span><button type="button" onclick="editWaterRecord('${escapeHtml(record.id)}')" aria-label="修改喝水紀錄" class="ml-1 text-sky-300 hover:text-white"><i class="fa-solid fa-pen"></i></button><button type="button" onclick="deleteWaterRecord('${escapeHtml(record.id)}')" aria-label="刪除喝水紀錄" class="text-rose-300 hover:text-rose-100"><i class="fa-solid fa-trash"></i></button></span>`).join('')
                 : '<span class="text-xs text-slate-500">尚無此日期的喝水紀錄。</span>';
+        }
+
+        async function editWaterRecord(recordId) {
+            const record = getWaterForDate().find(item => item.id === recordId);
+            if (!record || String(record.id).startsWith('pending-')) return alert('這筆離線紀錄會在恢復網路後自動同步，目前無法修改。');
+            const nextValue = prompt('修改喝水量（1–5,000 ml）：', record.volumeMl);
+            if (nextValue === null) return;
+            const volumeMl = Math.round(Number(nextValue));
+            if (!Number.isInteger(volumeMl) || volumeMl < 1 || volumeMl > 5000) return alert('請輸入 1–5,000 ml。');
+            try {
+                const response = await fetch(`/api/shared-water/${encodeURIComponent(recordId)}`, {
+                    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ profileId: currentUserId, recordDate: selectedDate, volumeMl })
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok || !result.success) throw new Error(result.error || '無法修改喝水紀錄。');
+                allWater = allWater.map(item => item.id === recordId ? result.data : item);
+                renderWater(); saveDeviceBackup();
+            } catch (error) { alert(`修改喝水紀錄失敗：${error.message}`); }
+        }
+
+        async function deleteWaterRecord(recordId) {
+            const record = getWaterForDate().find(item => item.id === recordId);
+            if (!record || String(record.id).startsWith('pending-')) return alert('這筆離線紀錄會在恢復網路後自動同步，目前無法刪除。');
+            if (!confirm(`確定刪除 ${record.volumeMl.toLocaleString()} ml 的喝水紀錄？`)) return;
+            try {
+                const query = new URLSearchParams({ profileId: currentUserId, recordDate: selectedDate });
+                const response = await fetch(`/api/shared-water/${encodeURIComponent(recordId)}?${query}`, { method: 'DELETE' });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok || !result.success) throw new Error(result.error || '無法刪除喝水紀錄。');
+                allWater = allWater.filter(item => item.id !== recordId);
+                renderWater(); saveDeviceBackup();
+            } catch (error) { alert(`刪除喝水紀錄失敗：${error.message}`); }
         }
 
         function formatRecordDate(dateKey) {

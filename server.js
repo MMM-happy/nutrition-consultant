@@ -241,6 +241,46 @@ app.post('/api/shared-water', limitPublicWrites, async (req, res) => {
     }
 });
 
+app.patch('/api/shared-water/:id', limitPublicWrites, async (req, res) => {
+    try {
+        const id = String(req.params.id || '');
+        const input = req.body || {};
+        const volumeMl = Math.round(Number(input.volumeMl));
+        const profileId = String(input.profileId || '');
+        const recordDate = String(input.recordDate || '');
+        if (!/^[0-9a-f-]{36}$/i.test(id) || !profileId || !/^\d{4}-\d{2}-\d{2}$/.test(recordDate) || !Number.isInteger(volumeMl) || volumeMl < 1 || volumeMl > 5000) {
+            return res.status(400).json({ success: false, error: '喝水紀錄格式不正確。' });
+        }
+        const updated = await supabaseRequest(`nutrition_water_logs?id=eq.${encodeURIComponent(id)}&profile_id=eq.${encodeURIComponent(profileId)}&record_date=eq.${encodeURIComponent(recordDate)}`, {
+            method: 'PATCH', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ volume_ml: volumeMl })
+        });
+        if (!updated?.[0]) return res.status(404).json({ success: false, error: '找不到可修改的喝水紀錄。' });
+        res.json({ success: true, data: waterToClient(updated[0]) });
+    } catch (error) {
+        console.error('Shared water update error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.delete('/api/shared-water/:id', limitPublicWrites, async (req, res) => {
+    try {
+        const id = String(req.params.id || '');
+        const profileId = String(req.query.profileId || '');
+        const recordDate = String(req.query.recordDate || '');
+        if (!/^[0-9a-f-]{36}$/i.test(id) || !profileId || !/^\d{4}-\d{2}-\d{2}$/.test(recordDate)) {
+            return res.status(400).json({ success: false, error: '喝水紀錄識別資料不正確。' });
+        }
+        const deleted = await supabaseRequest(`nutrition_water_logs?id=eq.${encodeURIComponent(id)}&profile_id=eq.${encodeURIComponent(profileId)}&record_date=eq.${encodeURIComponent(recordDate)}`, {
+            method: 'DELETE', headers: { Prefer: 'return=representation' }
+        });
+        if (!deleted?.[0]) return res.status(404).json({ success: false, error: '找不到可刪除的喝水紀錄。' });
+        res.json({ success: true, data: waterToClient(deleted[0]) });
+    } catch (error) {
+        console.error('Shared water delete error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.post('/api/admin/login', limitPublicWrites, (req, res) => {
     if (!ADMIN_PASSWORD) return res.status(503).json({ success: false, error: '管理員登入尚未完成設定。' });
     if (!secureCompare(String(req.body?.password || ''), ADMIN_PASSWORD)) {
