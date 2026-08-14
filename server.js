@@ -373,17 +373,20 @@ async function callGemini(apiKey, promptParts, responseJsonFormat = false) {
 
     // 1. 先嘗試預設常用模型
     for (const m of candidateModels) {
-        try {
-            const modelConfig = { model: m };
-            if (responseJsonFormat) {
-                modelConfig.generationConfig = { responseMimeType: "application/json" };
+        for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+                const modelConfig = { model: m };
+                if (responseJsonFormat) modelConfig.generationConfig = { responseMimeType: "application/json" };
+                const model = ai.getGenerativeModel(modelConfig);
+                const result = await model.generateContent(promptParts);
+                const res = await result.response;
+                return res.text();
+            } catch (err) {
+                lastError = err;
+                const retryable = /429|500|502|503|504|overload|temporar/i.test(String(err.message || err));
+                if (!retryable || attempt === 1) break;
+                await new Promise(resolve => setTimeout(resolve, 900));
             }
-            const model = ai.getGenerativeModel(modelConfig);
-            const result = await model.generateContent(promptParts);
-            const res = await result.response;
-            return res.text();
-        } catch (err) {
-            lastError = err;
         }
     }
 

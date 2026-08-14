@@ -525,6 +525,19 @@
                     <i class="fa-solid fa-bolt text-amber-300"></i>
                     <span id="analyzePhotoBtnText">🤖 AI 視覺辨識照片並計算熱量</span>
                 </button>
+
+                <div id="photoResultEditor" class="hidden rounded-2xl border border-emerald-800/70 bg-emerald-950/30 p-4 space-y-3">
+                    <div class="flex items-center justify-between gap-3"><h4 class="font-bold text-emerald-200"><i class="fa-solid fa-sliders mr-2"></i>確認或修正辨識結果</h4><span class="text-[11px] text-slate-400">儲存前可自行調整</span></div>
+                    <label class="block text-xs text-slate-400">餐點名稱<input id="photoResultName" maxlength="200" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"></label>
+                    <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        <label class="text-xs text-slate-400">熱量 kcal<input id="photoResultCalories" type="number" min="0" max="10000" step="1" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"></label>
+                        <label class="text-xs text-emerald-300">蛋白質 g<input id="photoResultProtein" type="number" min="0" max="1000" step="1" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"></label>
+                        <label class="text-xs text-amber-300">碳水 g<input id="photoResultCarbs" type="number" min="0" max="1000" step="1" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"></label>
+                        <label class="text-xs text-violet-300">脂肪 g<input id="photoResultFat" type="number" min="0" max="1000" step="1" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"></label>
+                    </div>
+                    <p id="photoResultAnalysis" class="rounded-xl bg-slate-950/60 p-3 text-xs leading-6 text-slate-300"></p>
+                    <div class="flex flex-col gap-2 sm:flex-row"><button type="button" onclick="savePhotoAnalysis()" class="flex-1 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-emerald-400">儲存公開飲食紀錄</button><button type="button" onclick="cancelPhotoAnalysis()" class="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-bold text-slate-300 hover:bg-slate-800">取消</button></div>
+                </div>
             </div>
 
             <!-- MODE 2: Text Input -->
@@ -782,6 +795,7 @@
 
         let selectedBase64Image = null;
         let selectedImageMimeType = 'image/jpeg';
+        let pendingPhotoAnalysis = null;
 
         window.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('recordDate').value = selectedDate;
@@ -1342,10 +1356,54 @@
 
         function clearPhoto() {
             selectedBase64Image = null;
+            pendingPhotoAnalysis = null;
             document.getElementById('foodPhotoInput').value = '';
             document.getElementById('photoFileName').innerText = '點擊選擇照片 / 手機直接拍照上傳';
             document.getElementById('photoPreviewContainer').classList.add('hidden');
             document.getElementById('photoDescription').value = '';
+            document.getElementById('photoResultEditor').classList.add('hidden');
+        }
+
+        function showPhotoAnalysisEditor(data, mealType, photoDescription) {
+            pendingPhotoAnalysis = { data, mealType, photoDescription };
+            document.getElementById('photoResultName').value = data.mealName || '照片辨識餐點';
+            document.getElementById('photoResultCalories').value = Number(data.calories) || 0;
+            document.getElementById('photoResultProtein').value = Number(data.protein) || 0;
+            document.getElementById('photoResultCarbs').value = Number(data.carbs) || 0;
+            document.getElementById('photoResultFat').value = Number(data.fat) || 0;
+            document.getElementById('photoResultAnalysis').innerText = data.analysis || '請依實際份量確認營養素後再儲存。';
+            document.getElementById('photoResultEditor').classList.remove('hidden');
+            document.getElementById('photoResultEditor').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        function cancelPhotoAnalysis() {
+            pendingPhotoAnalysis = null;
+            document.getElementById('photoResultEditor').classList.add('hidden');
+        }
+
+        async function savePhotoAnalysis() {
+            if (!pendingPhotoAnalysis || !selectedBase64Image) return alert('請先完成照片辨識。');
+            const numberFrom = id => Math.round(Number(document.getElementById(id).value));
+            const mealName = document.getElementById('photoResultName').value.trim();
+            const calories = numberFrom('photoResultCalories');
+            const protein = numberFrom('photoResultProtein');
+            const carbs = numberFrom('photoResultCarbs');
+            const fat = numberFrom('photoResultFat');
+            if (!mealName || [calories, protein, carbs, fat].some(value => !Number.isInteger(value) || value < 0) || calories > 10000 || protein > 1000 || carbs > 1000 || fat > 1000) return alert('請確認餐點名稱與營養素數值。');
+            const saveButton = document.querySelector('#photoResultEditor button');
+            saveButton.disabled = true;
+            try {
+                const { data, mealType, photoDescription } = pendingPhotoAnalysis;
+                await saveSharedMeal({
+                    type: mealType, name: '📸 ' + mealName, calories, protein, carbs, fat,
+                    tip: data.tip || '',
+                    analysis: `${photoDescription ? `使用者補充：${photoDescription}\n\n` : ''}${data.analysis || '此為 AI 依照片與可見份量進行的估算，實際烹調用油、醬料與份量可能造成差異。'}`,
+                    source: 'photo', photoBase64: selectedBase64Image, photoMimeType: selectedImageMimeType
+                });
+                renderMeals(); clearPhoto();
+                alert(`已儲存：${mealName}（${calories} kcal）`);
+            } catch (error) { alert(`公開儲存失敗：${error.message}`); }
+            finally { saveButton.disabled = false; }
         }
 
         // AI Vision 照片辨識
@@ -1377,23 +1435,7 @@
                 const result = await res.json().catch(() => ({ success: false, error: `伺服器回應異常（${res.status}），請稍後再試。` }));
                 if (result.success) {
                     const data = result.data;
-                    await saveSharedMeal({
-                        type: mealType,
-                        name: '📸 ' + (data.mealName || '照片辨識餐點'),
-                        calories: data.calories || 350,
-                        protein: data.protein || 20,
-                        carbs: data.carbs || 30,
-                        fat: data.fat || 12,
-                        tip: data.tip || '',
-                        analysis: `${photoDescription ? `使用者補充：${photoDescription}\n\n` : ''}${data.analysis || '此為 AI 依照片中的食材與可見份量進行的估算，實際烹調用油、醬料與份量可能造成差異。'}`,
-                        source: 'photo',
-                        photoBase64: selectedBase64Image,
-                        photoMimeType: selectedImageMimeType
-                    });
-
-                    renderMeals();
-                    clearPhoto();
-                    alert(`🎉 辨識成功！已為 ${currentUser.name} 新增：${data.mealName} (約 ${data.calories} kcal)`);
+                    showPhotoAnalysisEditor(data, mealType, photoDescription);
                 } else {
                     alert('照片分析失敗：' + (result.error || '請稍後再試。'));
                 }
