@@ -536,7 +536,8 @@
 
                 <div id="photoResultEditor" class="hidden rounded-2xl border border-emerald-800/70 bg-emerald-950/30 p-4 space-y-3">
                     <div class="flex items-center justify-between gap-3"><h4 class="font-bold text-emerald-200"><i class="fa-solid fa-sliders mr-2"></i>確認或修正辨識結果</h4><span class="text-[11px] text-slate-400">儲存前可自行調整</span></div>
-                    <label class="block text-xs text-slate-400">餐點名稱<input id="photoResultName" maxlength="200" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"></label>
+                    <label class="block text-xs text-slate-400">餐點名稱<input id="photoResultName" maxlength="200" onchange="refreshCorrectedPhotoAnalysis()" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"></label>
+                    <p id="photoCorrectionHint" class="text-[11px] leading-5 text-amber-200/90">修改名稱後，系統會依修正後名稱重新估算營養素與照片／營養說明。</p>
                     <div class="grid grid-cols-2 gap-2 sm:grid-cols-4">
                         <label class="text-xs text-slate-400">熱量 kcal<input id="photoResultCalories" type="number" min="0" max="10000" step="1" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"></label>
                         <label class="text-xs text-emerald-300">蛋白質 g<input id="photoResultProtein" type="number" min="0" max="1000" step="1" class="mt-1 w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-white"></label>
@@ -804,6 +805,7 @@
         let selectedBase64Image = null;
         let selectedImageMimeType = 'image/jpeg';
         let pendingPhotoAnalysis = null;
+        let isRefreshingPhotoAnalysis = false;
 
         window.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('recordDate').value = selectedDate;
@@ -1386,6 +1388,7 @@
         function showPhotoAnalysisEditor(data, mealType, photoDescription) {
             pendingPhotoAnalysis = { data, mealType, photoDescription };
             document.getElementById('photoResultName').value = data.mealName || '照片辨識餐點';
+            document.getElementById('photoResultName').dataset.analyzedName = data.mealName || '';
             document.getElementById('photoResultCalories').value = Number(data.calories) || 0;
             document.getElementById('photoResultProtein').value = Number(data.protein) || 0;
             document.getElementById('photoResultCarbs').value = Number(data.carbs) || 0;
@@ -1400,8 +1403,45 @@
             document.getElementById('photoResultEditor').classList.add('hidden');
         }
 
+        async function refreshCorrectedPhotoAnalysis() {
+            const nameInput = document.getElementById('photoResultName');
+            const correctedMealName = nameInput.value.trim();
+            const analyzedName = String(nameInput.dataset.analyzedName || '').trim();
+            if (!pendingPhotoAnalysis || !selectedBase64Image || !correctedMealName || correctedMealName === analyzedName || isRefreshingPhotoAnalysis) return;
+            isRefreshingPhotoAnalysis = true;
+            const hint = document.getElementById('photoCorrectionHint');
+            const saveButton = document.querySelector('#photoResultEditor button');
+            saveButton.disabled = true;
+            hint.innerText = '正在依修正後名稱重新估算熱量、營養素與照片說明…';
+            try {
+                const { mealType, photoDescription } = pendingPhotoAnalysis;
+                const response = await fetch('/api/parse-food-image', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ imageBase64: selectedBase64Image, mimeType: selectedImageMimeType, mealType, photoDescription, correctedMealName, apiKey: document.getElementById('userApiKey').value.trim() })
+                });
+                const result = await response.json().catch(() => ({}));
+                if (!response.ok || !result.success) throw new Error(result.error || '重新分析失敗。');
+                const data = result.data;
+                pendingPhotoAnalysis.data = data;
+                nameInput.value = data.mealName || correctedMealName;
+                nameInput.dataset.analyzedName = nameInput.value;
+                document.getElementById('photoResultCalories').value = Number(data.calories) || 0;
+                document.getElementById('photoResultProtein').value = Number(data.protein) || 0;
+                document.getElementById('photoResultCarbs').value = Number(data.carbs) || 0;
+                document.getElementById('photoResultFat').value = Number(data.fat) || 0;
+                document.getElementById('photoResultAnalysis').innerText = data.analysis || '請依實際份量確認營養素後再儲存。';
+                hint.innerText = '已依修正後名稱更新營養素與照片／營養說明；仍可再手動調整數值。';
+            } catch (error) {
+                hint.innerText = `無法重新分析：${error.message}；你仍可手動修正營養素後儲存。`;
+            } finally {
+                isRefreshingPhotoAnalysis = false;
+                saveButton.disabled = false;
+            }
+        }
+
         async function savePhotoAnalysis() {
             if (!pendingPhotoAnalysis || !selectedBase64Image) return alert('請先完成照片辨識。');
+            if (isRefreshingPhotoAnalysis) return alert('正在依修正名稱重新估算，請稍候。');
             const numberFrom = id => Math.round(Number(document.getElementById(id).value));
             const mealName = document.getElementById('photoResultName').value.trim();
             const calories = numberFrom('photoResultCalories');

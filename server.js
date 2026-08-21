@@ -529,7 +529,7 @@ app.post('/api/parse-meal', limitPublicWrites, async (req, res) => {
 // ---------------------------------------------------------
 app.post('/api/parse-food-image', limitPublicWrites, async (req, res) => {
     try {
-        const { imageBase64, mimeType = 'image/jpeg', mealType = '午餐', photoDescription = '', apiKey } = req.body;
+        const { imageBase64, mimeType = 'image/jpeg', mealType = '午餐', photoDescription = '', correctedMealName = '', apiKey } = req.body;
 
         if (!imageBase64) {
             return res.status(400).json({ success: false, error: '請上傳或拍攝一張食物照片！' });
@@ -538,6 +538,7 @@ app.post('/api/parse-food-image', limitPublicWrites, async (req, res) => {
         const cleanBase64 = validatePhotoPayload(imageBase64, mimeType);
 
         const userDescription = String(photoDescription || '').trim().slice(0, 500);
+        const confirmedMealName = String(correctedMealName || '').trim().slice(0, 200);
         const prompt = `
 你是一位具備視覺影像辨識能力的頂尖專業營養師與美食熱量專家。
 請仔細觀察這張照片中的食物：
@@ -547,7 +548,7 @@ app.post('/api/parse-food-image', limitPublicWrites, async (req, res) => {
 4. 給予一句親切且具體的營養建議。照片辨識與份量估算可能有誤差，不可當作醫療或治療建議。
 
 使用者對此餐點的補充說明：${userDescription || '未提供'}
-請將補充說明視為估算參考；若與照片不一致，以照片可見內容為主，並在 analysis 中誠實說明不確定處。
+${confirmedMealName ? `使用者已確認並修正餐點名稱為：「${confirmedMealName}」。請將此名稱視為本次分析的主要依據，mealName 必須輸出完全相同的名稱，並依此重新估算熱量、三大營養素與 analysis。` : '請將補充說明視為估算參考；若與照片不一致，以照片可見內容為主，並在 analysis 中誠實說明不確定處。'}
 
 請【只輸出以下 JSON 格式】（不要包含任何額外說明文字）：
 {
