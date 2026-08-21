@@ -1356,9 +1356,9 @@
                 alert('公開相簿目前支援 JPG、PNG 或 WebP 圖片。');
                 return;
             }
-            if (file.size > 6 * 1024 * 1024) {
+            if (file.size > 12 * 1024 * 1024) {
                 e.target.value = '';
-                alert('照片請小於 6MB，才能完成公開雲端備份。');
+                alert('照片請小於 12MB，才能完成公開雲端備份。');
                 return;
             }
             selectedImageMimeType = file.type || 'image/jpeg';

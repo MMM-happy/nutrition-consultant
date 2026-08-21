@@ -65,8 +65,8 @@ async function uploadPublicMealPhoto(base64Input, mimeType, profileId, recordDat
 
     const cleanBase64 = String(base64Input).replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '');
     const imageBuffer = Buffer.from(cleanBase64, 'base64');
-    if (!imageBuffer.length || imageBuffer.length > 6 * 1024 * 1024) {
-        throw new Error('照片大小請小於 6MB。');
+    if (!imageBuffer.length || imageBuffer.length > 12 * 1024 * 1024) {
+        throw new Error('照片大小請小於 12MB。');
     }
 
     const extension = mimeType === 'image/png' ? 'png' : mimeType === 'image/webp' ? 'webp' : 'jpg';
@@ -429,7 +429,7 @@ function validatePhotoPayload(imageBase64, mimeType) {
     const cleanBase64 = String(imageBase64 || '').replace(/^data:image\/[a-zA-Z0-9.+-]+;base64,/, '');
     if (!cleanBase64 || !/^[A-Za-z0-9+/=\s]+$/.test(cleanBase64)) throw new Error('照片資料格式不正確。');
     const imageBuffer = Buffer.from(cleanBase64, 'base64');
-    if (!imageBuffer.length || imageBuffer.length > 6 * 1024 * 1024) throw new Error('照片大小請小於 6MB。');
+    if (!imageBuffer.length || imageBuffer.length > 12 * 1024 * 1024) throw new Error('照片大小請小於 12MB。');
     return cleanBase64;
 }
 
